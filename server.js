@@ -5,6 +5,10 @@ import webhookRouter from "./src/routes/webhook.js";
 
 const app = express();
 
+// O Vercel termina o TLS e reencaminha o IP real via X-Forwarded-For.
+// Necessário para o rate limiter funcionar corretamente atrás do proxy.
+app.set("trust proxy", 1);
+
 app.use(helmet());
 
 // Mantém o corpo raw para validar a assinatura HMAC da Meta
