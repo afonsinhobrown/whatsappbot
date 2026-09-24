@@ -141,24 +141,39 @@ O bot já está hospedado no Vercel:
 
 ### Variáveis já configuradas no Vercel
 
-| Variável | Valor atual |
+| Variável | Estado |
 |---|---|
-| `VERIFY_TOKEN` | `IuAZjHEDzxNsL7GckVgq9aJK` |
-| `WHATSAPP_TOKEN` | **placeholder `Secret`** (trocar quando tiveres a chave real) |
-| `PHONE_NUMBER_ID` | **placeholder `none`** (trocar quando tiveres o ID real) |
+| `VERIFY_TOKEN` | ✅ `IuAZjHEDzxNsL7GckVgq9aJK` |
+| `WHATSAPP_TOKEN` | ✅ token real da app `wassppbot` (temporário — ver abaixo) |
+| `PHONE_NUMBER_ID` | ✅ `1336702446191164` |
 
-### Como alterar variáveis e refazer o deploy
+### 🔁 O token expira — cria um PERMANENTE (faz uma única vez!)
 
-Quando tiveres as credenciais da Meta:
+O token temporário da Meta dura **24 horas**. Para nunca mais repetires, cria um **token permanente**:
+
+1. Abre `https://business.facebook.com/settings/system-users`
+2. **Add** → nome `whatsappbot-bot` → função **Admin** → **Add user**
+3. No utilizador criado → **Assign assets** → **Apps** → liga a app `wassppbot`
+4. Volta ao utilizador → **Generate new token**
+5. Marca as permissões:
+   - `whatsapp_business_messaging`
+   - `whatsapp_business_management`
+6. **Generate Token** → copia (é para sempre)
+
+Depois atualiza no Vercel:
 
 ```bash
-vercel env add WHATSAPP_TOKEN production   # cola o token real
-vercel env add PHONE_NUMBER_ID production  # cola o ID real
+vercel env add WHATSAPP_TOKEN production   # cola o token permanente
 vercel deploy --prod --yes                 # refaz o deploy
 ```
 
-> ⚠️ Enquanto `WHATSAPP_TOKEN` for `Secret`, o webhook **recusa** mensagens sem assinatura válida
-> (resposta 401). Por isso, ao configurar a Meta, usa logo os valores reais.
+### Como alterar variáveis e refazer o deploy
+
+```bash
+vercel env add WHATSAPP_TOKEN production   # copia/cola
+vercel env add PHONE_NUMBER_ID production  # se mudar
+vercel deploy --prod --yes                 # refaz o deploy
+```
 
 ### Estrutura usada para o Vercel
 
