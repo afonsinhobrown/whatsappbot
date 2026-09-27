@@ -146,7 +146,7 @@ export async function ativarLicenca(produtoNome, username, meses = 1) {
         break;
 
       case "CAFEPOINT":
-        userRes = await queryDual("CAFEPOINT", 'SELECT "restaurantId" FROM "User" WHERE email = $1', [username]);
+        userRes = await queryDual("CAFEPOINT", 'SELECT "restaurantId" FROM "User" WHERE username = $1', [username]);
         if (userRes.rows.length > 0) {
           const restId = userRes.rows[0].restaurantId;
           await queryDual("CAFEPOINT", 'UPDATE "License" SET status = \'active\', "validUntil" = GREATEST("validUntil", CURRENT_TIMESTAMP) + interval \'1 month\' * $1 WHERE "restaurantId" = $2', [meses, restId]);
