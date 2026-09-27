@@ -113,7 +113,11 @@ export async function handlePagamentoHefelgymId(client, ctx, text, send) {
     }
     if (check.user && check.user.name) {
       ctx.contaNome = check.user.name;
-      await send(`✅ *Atleta confirmado:* Olá, ${check.user.name}!`);
+      // Atualizamos o valor da mensalidade (vem da base de dados do Gymar!)
+      if (check.user.fee) {
+        ctx.valor = Number(check.user.fee);
+      }
+      await send(`✅ *Atleta confirmado:* Olá, ${check.user.name}!\nA sua mensalidade está definida em ${formatMoney(ctx.valor)}.`);
     }
   }
 
