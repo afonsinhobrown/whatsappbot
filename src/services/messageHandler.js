@@ -32,6 +32,20 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
 
   console.log(`[MSG][tenant ${tenant ? tenant.id : "?"}] ${senderName || "cliente"} (${phone}): "${text}"`);
 
+  // Se a mensagem vier do administrador e for um comando de resposta (!responder numero mensagem)
+  const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER || "";
+  if (phone === adminPhone && text.toLowerCase().startsWith("!responder")) {
+    const parts = text.split(" ");
+    if (parts.length >= 3) {
+      const targetPhone = parts[1];
+      const replyText = parts.slice(2).join(" ");
+      await sendTextMessage(targetPhone, `👨‍💻 *Atendimento:* ${replyText}`, tenant);
+      return sendTextMessage(phone, `✅ Mensagem enviada para ${targetPhone}.`, tenant);
+    } else {
+      return sendTextMessage(phone, `❌ Erro no comando. Use: !responder NUMERO MENSAGEM`, tenant);
+    }
+  }
+
   const send = (reply) => sendTextMessage(phone, reply, tenant);
   const lower = text.toLowerCase();
 
@@ -63,17 +77,18 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     case "pagamento_metodo":
       return handlePagamentoMetodo(client, ctx, text, send);
     case "humano":
-      return send(
-        "Já registámos o seu pedido de atendimento humano. Aguarde, por favor. " +
-          'Escreva "menu" para voltar às opções.'
-      );
+      // Encaminhar a resposta do cliente para o admin em modo relay
+      if (adminPhone) {
+        await sendTextMessage(adminPhone, `📩 *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
+      }
+      return; // não envia feedback automático ao cliente
     case "menu":
     default:
-      return routeMenu(client, lower, send);
+      return routeMenu(client, lower, send, tenant);
   }
 }
 
-function routeMenu(client, lower, send) {
+function routeMenu(client, lower, send, tenant) {
   if (lower === "1" || lower.includes("cotação") || lower.includes("cotacao")) {
     return startCotacao(client, send);
   }
@@ -87,7 +102,7 @@ function routeMenu(client, lower, send) {
     return startEncomenda(client, send);
   }
   if (lower === "5" || lower.includes("humano") || lower.includes("atendente")) {
-    return falarComHumano(client, send);
+    return falarComHumano(client, send, tenant);
   }
   return send(`Não entendi o seu pedido. 🤔\n\nEscolha uma opção:\n${MENU}`);
 }
