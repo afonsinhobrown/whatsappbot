@@ -1,71 +1,93 @@
 import { sendTextMessage } from "./metaApi.js";
-import { normalizePhone } from "./dbService.js";
-import { handleFAQ, handleFalarComAtendente } from "../flows/atendimento.js";
-import { handleConsultaDados } from "../flows/consultaDados.js";
+import { getClientByWhatsapp, touchClient, setClientName } from "./dbService.js";
+import { getSession, setSession } from "./sessionService.js";
+import { MENU, sendMenu } from "../flows/menu.js";
+import {
+  startCotacao,
+  startEncomenda,
+  handleCotacaoTipo,
+  handleCotacaoProdutoLista,
+  handleCotacaoDescricao,
+} from "../flows/cotacao.js";
+import { showProdutos, handlePlanoEscolha } from "../flows/planos.js";
+import { showPagamento, handlePlanoContratar, handlePagamentoMetodo } from "../flows/pagamento.js";
+import { falarComHumano } from "../flows/humano.js";
 
-const MENU = [
-  "🙂 Olá! Eu sou o assistente TECNOINCUBADORA.",
-  "",
-  "Escolha uma opção:",
-  "1️⃣ Consultar dados (saldo)",
-  "2️⃣ Falar com atendente",
-  "3️⃣ FAQ",
-  "",
-  "Ou escreva a sua pergunta.",
-].join("\n");
+const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
 
 /**
  * Ponto de entrada para cada mensagem de texto recebida no webhook.
- * Identifica a intenção e chama o fluxo correspondente.
+ * Gere o cliente + sessão e encaminha para o fluxo consoante o estado.
  */
-export async function handleIncomingMessage(message, changeValue) {
-  const phone = normalizePhone(message.from);
-  const text = (message.text && message.text.body || "").trim();
+export async function handleIncomingMessage(message, changeValue, tenant) {
+  const phone = message.from;
+  const text = ((message.text && message.text.body) || "").trim();
   const senderName =
-    (changeValue.contacts && changeValue.contacts[0] && changeValue.contacts[0].profile &&
+    (changeValue &&
+      changeValue.contacts &&
+      changeValue.contacts[0] &&
+      changeValue.contacts[0].profile &&
       changeValue.contacts[0].profile.name) ||
-    "cliente";
+    "";
 
-  console.log(`[MSG] ${senderName} (${phone}): "${text}"`);
+  console.log(`[MSG][tenant ${tenant ? tenant.id : "?"}] ${senderName || "cliente"} (${phone}): "${text}"`);
 
-  // "send" envia a resposta para o mesmo número de onde veio a mensagem
-  const send = (reply) => sendTextMessage(phone, reply);
-
+  const send = (reply) => sendTextMessage(phone, reply, tenant);
   const lower = text.toLowerCase();
 
-  // Comandos de menu
-  if (["menu", "iniciar", "começar", "ola", "olá", "oi", "hey", "0"].includes(lower)) {
-    return send(MENU);
+  const client = await getClientByWhatsapp(tenant.id, phone);
+  await touchClient(client.id);
+  await setClientName(client.id, senderName);
+
+  const session = await getSession(tenant.id, client.id);
+  const estado = session.estado_atual || "inicio";
+  const ctx = session.contexto || {};
+
+  // Comandos globais: voltar ao menu / cancelar
+  if (COMANDOS_MENU.includes(lower)) {
+    await setSession(client.id, "menu", {});
+    return sendMenu(send, senderName);
   }
 
-  if (lower === "1" || lower.includes("saldo") || lower.includes("saldo é")) {
-    return handleConsultaDados(text, phone, send);
+  switch (estado) {
+    case "cotacao_tipo":
+      return handleCotacaoTipo(client, ctx, text, send);
+    case "cotacao_produto_lista":
+      return handleCotacaoProdutoLista(client, ctx, text, send);
+    case "cotacao_descricao":
+      return handleCotacaoDescricao(client, ctx, text, send);
+    case "planos_lista":
+      return handlePlanoEscolha(client, ctx, text, send);
+    case "planos_plano":
+      return handlePlanoContratar(client, ctx, text, send);
+    case "pagamento_metodo":
+      return handlePagamentoMetodo(client, ctx, text, send);
+    case "humano":
+      return send(
+        "Já registámos o seu pedido de atendimento humano. Aguarde, por favor. " +
+          'Escreva "menu" para voltar às opções.'
+      );
+    case "menu":
+    default:
+      return routeMenu(client, lower, send);
   }
+}
 
-  if (lower === "2" || lower.includes("atendente") || lower.includes("humano")) {
-    return handleFalarComAtendente(phone);
+function routeMenu(client, lower, send) {
+  if (lower === "1" || lower.includes("cotação") || lower.includes("cotacao")) {
+    return startCotacao(client, send);
   }
-
-  if (lower === "3" || lower.includes("faq") || lower.includes("dúvida") || lower.includes("ajuda")) {
-    return send(
-      "Perguntas frequentes:\n" +
-        "· \"esqueci a senha\" → recuperação de senha\n" +
-        "· \"como pagar\" → instruções de pagamento\n" +
-        "· \"horário\" → horário de atendimento\n\n" +
-        "Digite \"menu\" para voltar às opções."
-    );
+  if (lower === "2" || lower.includes("plano") || lower.includes("preço") || lower.includes("preco")) {
+    return showProdutos(client, send);
   }
-
-  // FAQ por palavras-chave
-  const faqAnswer = handleFAQ(text);
-  if (faqAnswer) {
-    return send(faqAnswer);
+  if (lower === "3" || lower.includes("pagar") || lower.includes("licen")) {
+    return showPagamento(client, send);
   }
-
-  // Nada correspondeu → mostra o menu
-  return send(
-    `Olá ${senderName}!\n` +
-      "Ainda não entendi o seu pedido. 😅\n\n" +
-      MENU
-  );
+  if (lower === "4" || lower.includes("encomend") || lower.includes("sistema")) {
+    return startEncomenda(client, send);
+  }
+  if (lower === "5" || lower.includes("humano") || lower.includes("atendente")) {
+    return falarComHumano(client, send);
+  }
+  return send(`Não entendi o seu pedido. 🤔\n\nEscolha uma opção:\n${MENU}`);
 }

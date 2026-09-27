@@ -1,40 +1,12 @@
-import express from "express";
-import helmet from "helmet";
+import { pathToFileURL } from "url";
+import app from "./src/app.js";
 import { env } from "./src/config/env.js";
-import webhookRouter from "./src/routes/webhook.js";
 
-const app = express();
-
-// O Vercel termina o TLS e reencaminha o IP real via X-Forwarded-For.
-// Necessário para o rate limiter funcionar corretamente atrás do proxy.
-app.set("trust proxy", 1);
-
-app.use(helmet());
-
-// Mantém o corpo raw para validar a assinatura HMAC da Meta
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  })
-);
-
-app.get("/", (_req, res) => {
-  res.json({ service: "whatsappbot", status: "ok" });
-});
-
-app.use("/webhook", webhookRouter);
-
-// Erros inesperados não derrubam o servidor
-app.use((err, _req, res, _next) => {
-  console.error("[ERRO]", err);
-  res.status(500).json({ error: "Erro interno do servidor" });
-});
-
+function start() {
 app.listen(env.port, () => {
   console.log(`Servidor a correr em http://localhost:${env.port}`);
   console.log(`Webhook: http://localhost:${env.port}/webhook`);
+  console.log(`Admin:   http://localhost:${env.port}/admin`);
 
   if (!env.verifyToken) {
     console.warn("[AVISO] VERIFY_TOKEN não definido no .env — a verificação da Meta vai falhar");
@@ -42,7 +14,22 @@ app.listen(env.port, () => {
   if (!env.whatsappToken || !env.phoneNumberId) {
     console.warn("[AVISO] WHATSAPP_TOKEN/PHONE_NUMBER_ID não definidos — envios ficarão em modo MOCK");
   }
+  if (!env.appSecret) {
+    console.warn("[AVISO] APP_SECRET não definido — assinatura do webhook não é validada");
+  }
   if (!env.databaseUrl) {
-    console.warn("[AVISO] DATABASE_URL não definida — a usar base de dados DEMO em memória");
+    console.warn("[AVISO] DATABASE_URL não definida — o bot e o admin não terão dados");
+  }
+  if (!env.adminPassword) {
+    console.warn("[AVISO] ADMIN_PASSWORD não definida — o painel /admin ficará inacessível");
   }
 });
+}
+
+// Só arranca o servidor quando executado directamente (npm start / npm run dev).
+// No Vercel, o app é servido por api/index.js.
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  start();
+}
+
+export default app;

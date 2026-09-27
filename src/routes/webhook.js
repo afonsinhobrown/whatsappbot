@@ -3,6 +3,7 @@ import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { env } from "../config/env.js";
 import { handleIncomingMessage } from "../services/messageHandler.js";
+import { getTenantByPhoneNumberId } from "../services/dbService.js";
 
 const router = Router();
 
@@ -40,7 +41,8 @@ router.get("/", (req, res) => {
  */
 router.post("/", limiter, async (req, res) => {
   // Validar assinatura HMAC (prova que o pedido vem mesmo da Meta)
-  if (env.whatsappToken && !isValidSignature(req)) {
+  // A Meta assina o corpo com o App Secret da aplicação (não o WhatsApp token)
+  if (env.appSecret && !isValidSignature(req)) {
     return res.status(401).send("Assinatura inválida");
   }
 
@@ -50,30 +52,41 @@ router.post("/", limiter, async (req, res) => {
     return res.status(404).send("Objeto desconhecido");
   }
 
-  // Confirmar receção à Meta primeiro
-  res.status(200).send("EVENT_RECEIVED");
+  // Processar primeiro (em serverless, responder antes faria o runtime
+  // terminar a função antes de concluir a base de dados / envio).
+  try {
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        if (change.field !== "messages") continue;
 
-  // Processar cada entrada (vem 1 por mensagem/atualização de estado normalmente)
-  for (const entry of body.entry || []) {
-    for (const change of entry.changes || []) {
-      if (change.field !== "messages") continue;
+        const value = change.value || {};
+        const message = value.messages && value.messages[0];
 
-      const value = change.value || {};
-      const message = value.messages && value.messages[0];
-
-      if (message && message.type === "text") {
-        try {
-          await handleIncomingMessage(message, value);
-        } catch (err) {
-          console.error("[WEBHOOK] Erro ao processar mensagem:", err);
+        if (message && message.type === "text") {
+          const phoneNumberId = value.metadata && value.metadata.phone_number_id;
+          const tenant = await getTenantByPhoneNumberId(phoneNumberId);
+          if (!tenant) {
+            console.warn(`[WEBHOOK] Sem tenant para phone_number_id=${phoneNumberId}`);
+            continue;
+          }
+          await handleIncomingMessage(message, value, tenant);
         }
       }
     }
+  } catch (err) {
+    console.error("[WEBHOOK] Erro ao processar mensagem:", err);
+    console.error(
+      "[WEBHOOK] O bot pode ter recebido a mensagem mas NÃO respondeu. " +
+        "Confirma o estado do token em /admin/api/meta-status"
+    );
   }
+
+  // Confirmar receção à Meta
+  return res.status(200).send("EVENT_RECEIVED");
 });
 
 /**
- * Verifica o cabeçalho X-Hub-Signature-256 usando o token do WhatsApp.
+ * Verifica o cabeçalho X-Hub-Signature-256 usando o App Secret da aplicação Meta.
  * Requer o corpo raw da requisição (guardado no middleware do server.js).
  */
 function isValidSignature(req) {
@@ -82,7 +95,7 @@ function isValidSignature(req) {
 
   if (!signatureHeader || !rawBody) return false;
 
-  const hmac = crypto.createHmac("sha256", env.whatsappToken);
+  const hmac = crypto.createHmac("sha256", env.appSecret);
   const digest = hmac.update(rawBody).digest("hex");
   const expected = `sha256=${digest}`;
 

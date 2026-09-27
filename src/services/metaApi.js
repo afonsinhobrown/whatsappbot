@@ -3,23 +3,26 @@ import { env, isMetaConfigured } from "../config/env.js";
 const GRAPH_API_VERSION = "v20.0";
 
 /**
- * Envia uma mensagem de texto simples para um número de WhatsApp.
- * Em modo MOCK (sem tokens) apenas imprime no console — útil para testes locais.
+ * Envia uma mensagem de texto para um número de WhatsApp.
+ * Usa as credenciais do tenant (token + phone_number_id) quando fornecidas;
+ * caso contrário, as do ambiente. Em modo MOCK (sem credenciais) imprime no console.
  */
-export async function sendTextMessage(to, text) {
+export async function sendTextMessage(to, text, tenant) {
   const formattedTo = formatTo(to);
+  const token = (tenant && tenant.token) || env.whatsappToken;
+  const phoneNumberId = (tenant && tenant.phone_number_id) || env.phoneNumberId;
 
-  if (!isMetaConfigured()) {
+  if (!token || !phoneNumberId) {
     console.log(`[MOCK] Para ${formattedTo}: ${text}`);
     return { mock: true, to: formattedTo, text };
   }
 
-  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${env.phoneNumberId}/messages`;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.whatsappToken}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -33,6 +36,17 @@ export async function sendTextMessage(to, text) {
 
   if (!response.ok) {
     const detail = await response.text();
+
+    // 190/463 = token expirado ou inválido. É a falha mais comum e
+    // ataca em silêncio, por isso merece uma mensagem explícita.
+    if (detail.includes('"code":190') || detail.includes('"code": 190')) {
+      throw new Error(
+        "TOKEN DA META EXPIRADO/INVÁLIDO (erro 190) — o bot não consegue enviar. " +
+          "Gera um token novo em Meta for Developers > WhatsApp > API Setup e " +
+          "actualiza WHATSAPP_TOKEN no Vercel. Detalhe: " + detail
+      );
+    }
+
     throw new Error(`Meta API ${response.status}: ${detail}`);
   }
 

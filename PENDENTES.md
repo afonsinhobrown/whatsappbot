@@ -1,5 +1,21 @@
 # 📋 PENDENTES — WhatsAppBot TECNOINCUBADORA
 
+> ⚠️ **FICHEIRO OBSOLETO — NÃO USAR COMO REFERÊNCIA.**
+>
+> Este ficheiro refere um **projeto antigo** (`whatsappbot-gold`, app `wassppbot`).
+> Todos os identificadores aqui estão **errados** para a configuração actual.
+>
+> A app real é a `tecno_bot` (`1089227356929033`), o número é `+258 86 139 0985`
+> (`phone_number_id` `1349279428267688`) e a app está em
+> `https://tecnoincubadora-admin-bots.vercel.app`.
+>
+> **O estado actual e o que falta está em [`RELATORIO.md`](RELATORIO.md), secção 0.**
+
+---
+
+<details>
+<summary>Conteúdo antigo (arquivado)</summary>
+
 > Última atualização: 24/09/2026
 > Legenda: `[ ]` por fazer · `[x]` feito
 
@@ -91,3 +107,5 @@ Sem isto, o bot usa dados **DEMO** em memória.
 - O token **temporário** expira em 24h → criar o **permanente** (tarefa 1).
 - O ficheiro `.env` é local e **não** vai para o GitHub (já está no `.gitignore`).
 - As credenciais no Vercel estão guardadas como *Secret* (não se leem de volta).
+
+</details>
