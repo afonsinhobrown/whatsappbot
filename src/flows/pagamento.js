@@ -88,7 +88,16 @@ export async function handlePagamentoSaasSenha(client, ctx, text, send) {
     // Se for válido (ou se não houver conector e devolver válido por defeito)
     if (check.user && check.user.name) {
       ctx.contaNome = check.user.name;
-      await send(`✅ *Conta confirmada:* Olá, ${check.user.name}!`);
+      
+      // Aplicar o pacote especial Moz Teles automaticamente
+      if (check.user.plan === 'moz teles') {
+        ctx.preco = 3000;
+        ctx.nome_plano = "moz teles (Pacote Especial)";
+        ctx.planoId = 40; // O ID que inserimos na tabela planos
+        await send(`✅ *Conta confirmada:* Olá, ${check.user.name}!\n\n_Detectámos o seu Pacote Especial. O valor foi ajustado para ${formatMoney(ctx.preco)}._`);
+      } else {
+        await send(`✅ *Conta confirmada:* Olá, ${check.user.name}!`);
+      }
     } else {
       await send(`✅ *Conta registada para licenciamento.*`);
     }

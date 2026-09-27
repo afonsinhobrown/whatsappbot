@@ -93,7 +93,7 @@ export async function validarContaSaaS(produtoNome, username, password) {
           values = [username];
           break;
         case "ARMAZEM":
-          queryStr = 'SELECT id, company_name as name, email FROM users WHERE email = $1';
+          queryStr = 'SELECT id, company_name as name, email, plan FROM users WHERE email = $1';
           values = [username];
           break;
         default:

@@ -1,0 +1,14 @@
+GYMAR_SUPABASE_URL="postgresql://postgres.mxvpguyjybztnqyglwju:pandorabox5229@aws-1-eu-central-1.pooler.supabase.co:6543/postgres?pgbouncer=true"
+GYMAR_NEON_URL="postgresql://neondb_owner:npg_qngruR4TLSk8@ep-shiny-truth-asbxssc2-pooler.c-4.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+
+XONGUILE_SUPABASE_URL="postgresql://postgres.frxhnhnmaodvcnuudmax:pandorabox5229@aws-1-eu-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
+XONGUILE_NEON_URL="postgresql://neondb_owner:npg_nip0JfTVxD7a@ep-steep-haze-at2hj23v-pooler.c-9.us-east-1.aws.neon.tech/xonguile-neon?sslmode=require"
+
+GESTORFARMA_SUPABASE_URL="postgresql://postgres.jikulbmlvksieyeoxdcq:pandorabox5229@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+GESTORFARMA_NEON_URL="postgresql://neondb_owner:npg_7onlDNLgU1Zv@ep-wispy-moon-atyocujw-pooler.c-9.us-east-1.aws.neon.tech/farmacia?sslmode=require&channel_binding=require"
+
+CAFEPOINT_DB_URL="postgresql://neondb_owner:npg_bKgz8Pi9CDul@ep-green-pond-al24ne9d-pooler.c-3.eu-central-1.aws.neon.tech/cafepoint-db?sslmode=require"
+SHOPLINK_DB_URL="postgresql://neondb_owner:npg_uiNlMAw0VIG6@ep-old-queen-b2z1ebjp-pooler.c-6.eu-central-1.aws.neon.tech/shoplink?sslmode=require&channel_binding=require"
+ARMAZEM_DB_URL="postgresql://neondb_owner:npg_CS1wih7QaNAu@ep-silent-moon-apyitvv5-pooler.c-7.us-east-1.aws.neon.tech/armazem?sslmode=require"
+
+PAYSUITE_API_TOKEN="2537|o8aGZSgAeG68MGyBUPPt24vqHGqZ0oPa1cuaWzf56a83e27f"

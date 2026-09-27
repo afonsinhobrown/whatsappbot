@@ -69,7 +69,9 @@ export async function buildCatalog(tenantId) {
 /**
  * Devolve a mensagem com os planos/licenças de um produto (sem prompt final).
  */
-export async function productPlansMessage(tenantId, produtoId) {
+export async function productPlansMessage(client, produtoId) {
+  const { tenant_id: tenantId, whatsapp_number: whatsappNumber } = client;
+
   const { rows: prod } = await query(
     "SELECT id, tipo, nome FROM produtos WHERE id = $1 AND tenant_id = $2",
     [produtoId, tenantId]
@@ -77,13 +79,17 @@ export async function productPlansMessage(tenantId, produtoId) {
   const produto = prod[0];
   if (!produto) return { nome: null, msg: "Produto não encontrado.", planos: [] };
 
-  const { rows: planos } = await query(
+  const { rows: planos_raw } = await query(
     `SELECT id, nome_plano, preco, periodo
        FROM planos
       WHERE produto_id = $1 AND tenant_id = $2 AND ativo = true
       ORDER BY preco`,
     [produtoId, tenantId]
   );
+
+  // Esconder o pacote "moz teles" do catálogo público. 
+  // O utilizador será mapeado para este plano automaticamente ao inserir as credenciais.
+  const planos = planos_raw.filter(pl => pl.nome_plano.toLowerCase() !== "moz teles");
 
   let msg = `📦 *${produto.nome}* (${TIPO_LABEL[produto.tipo] || produto.tipo})\n\n`;
   if (planos.length) {
@@ -112,7 +118,7 @@ export async function handlePlanoEscolha(client, ctx, text, send) {
   if (!n || n < 1 || n > ids.length) {
     return send('Escolha um número válido da lista, ou "0" para voltar.');
   }
-  const { nome, msg, planos } = await productPlansMessage(client.tenant_id, ids[n - 1]);
+  const { nome, msg, planos } = await productPlansMessage(client, ids[n - 1]);
 
   if (!planos.length) {
     await setSession(client.id, "menu", {});
