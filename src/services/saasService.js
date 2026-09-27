@@ -93,7 +93,8 @@ export async function validarContaSaaS(produtoNome, username, password) {
           values = [username];
           break;
         case "ARMAZEM":
-          queryStr = 'SELECT id, name, email FROM "Users" WHERE email = $1 AND password = $2';
+          queryStr = 'SELECT id, company_name as name, email FROM users WHERE email = $1';
+          values = [username];
           break;
         default:
           return { valid: true, user: { name: "Cliente" } };
@@ -168,7 +169,13 @@ export async function ativarLicenca(produtoNome, username, meses = 1) {
         break;
 
       case "ARMAZEM":
-        return true;
+        userRes = await queryDual("ARMAZEM", 'SELECT id FROM users WHERE email = $1', [username]);
+        if (userRes.rows.length > 0) {
+          const uId = userRes.rows[0].id;
+          await queryDual("ARMAZEM", "UPDATE users SET trial_ends_at = GREATEST(trial_ends_at, CURRENT_TIMESTAMP) + interval '1 month' * $1 WHERE id = $2", [meses, uId]);
+          return true;
+        }
+        break;
     }
   } catch (err) {
     console.error(`Erro ao ativar licença no ${sistema}:`, err);
