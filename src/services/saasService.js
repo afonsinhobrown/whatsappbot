@@ -77,16 +77,20 @@ export async function validarContaSaaS(produtoNome, username, password) {
       values = [username, password];
       switch (sistema) {
         case "XONGUILE":
-          queryStr = 'SELECT id, name, email FROM "Users" WHERE email = $1 AND password = $2';
+          queryStr = 'SELECT id, name, email FROM "Users" WHERE email = $1';
+          values = [username];
           break;
         case "GESTORFARMA":
-          queryStr = 'SELECT id, name, email FROM "Users" WHERE email = $1 AND password = $2';
+          queryStr = 'SELECT id, nome as name, email FROM farmacias_farmacia WHERE email = $1';
+          values = [username];
           break;
         case "CAFEPOINT":
-          queryStr = 'SELECT id, name, email FROM "User" WHERE email = $1 AND password = $2';
+          queryStr = 'SELECT id, name, username as email FROM "User" WHERE username = $1';
+          values = [username];
           break;
         case "SHOPLINK":
-          queryStr = 'SELECT id, nome as name, email FROM utilizador WHERE email = $1 AND password = $2';
+          queryStr = 'SELECT id, nome as name, email FROM utilizador WHERE email = $1';
+          values = [username];
           break;
         case "ARMAZEM":
           queryStr = 'SELECT id, name, email FROM "Users" WHERE email = $1 AND password = $2';
@@ -137,10 +141,10 @@ export async function ativarLicenca(produtoNome, username, meses = 1) {
         break;
 
       case "GESTORFARMA":
-        userRes = await queryDual("GESTORFARMA", 'SELECT tenant_id FROM "Users" WHERE email = $1', [username]);
+        userRes = await queryDual("GESTORFARMA", 'SELECT id FROM farmacias_farmacia WHERE email = $1', [username]);
         if (userRes.rows.length > 0) {
-          const tenantId = userRes.rows[0].tenant_id;
-          await queryDual("GESTORFARMA", 'UPDATE "Licenses" SET status = \'active\', "validUntil" = GREATEST("validUntil", CURRENT_TIMESTAMP) + interval \'1 month\' * $1 WHERE "tenant_id" = $2', [meses, tenantId]);
+          const farmId = userRes.rows[0].id;
+          await queryDual("GESTORFARMA", "UPDATE farmacias_licenca SET is_ativa = true, data_fim = GREATEST(data_fim, CURRENT_TIMESTAMP) + interval '1 month' * $1 WHERE farmacia_id = $2 AND is_ativa = true", [meses, farmId]);
           return true;
         }
         break;
