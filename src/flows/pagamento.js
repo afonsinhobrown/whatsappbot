@@ -1,6 +1,6 @@
 import { query } from "../services/dbService.js";
 import { setSession } from "../services/sessionService.js";
-import { validarXonguile } from "../services/saasService.js";
+import { validarContaSaaS } from "../services/saasService.js";
 import { createPaySuiteCharge } from "../services/paysuiteService.js";
 
 const METODOS = { 1: "emola", 2: "mpesa", 3: "visa" };
@@ -77,17 +77,21 @@ export async function handlePagamentoSaasSenha(client, ctx, text, send) {
   }
   ctx.saasSenha = text.trim();
 
-  // Validar automaticamente se for o Xonguile
-  if (ctx.produto && ctx.produto.toLowerCase().includes("xonguile")) {
-    await send("⏳ A validar a sua conta no Xonguile...");
-    const check = await validarXonguile(ctx.saasUser, ctx.saasSenha);
+  // Validar automaticamente a conta no SaaS correspondente
+  if (ctx.produto) {
+    await send(`⏳ A validar a sua conta no sistema ${ctx.produto}...`);
+    const check = await validarContaSaaS(ctx.produto, ctx.saasUser, ctx.saasSenha);
     if (!check.valid) {
       await setSession(client.id, "pagamento_saas_user", ctx);
-      return send("❌ *Credenciais inválidas!* O Utilizador ou a Senha não estão corretos.\n\nPor favor, digite novamente o seu *Usuário (username)* (ou \"0\" para cancelar):");
+      return send("❌ *Credenciais inválidas!* O Utilizador ou a Senha não estão corretos ou não existem no sistema.\n\nPor favor, digite novamente o seu *Usuário (username)* (ou \"0\" para cancelar):");
     }
-    // Se for válido, anexamos o nome verdadeiro da conta ao contexto
-    ctx.contaNome = check.user.name;
-    await send(`✅ *Conta confirmada:* Olá, ${check.user.name}!`);
+    // Se for válido (ou se não houver conector e devolver válido por defeito)
+    if (check.user && check.user.name) {
+      ctx.contaNome = check.user.name;
+      await send(`✅ *Conta confirmada:* Olá, ${check.user.name}!`);
+    } else {
+      await send(`✅ *Conta registada para licenciamento.*`);
+    }
   }
 
   return createLicencaAndAskMetodo(client, ctx, send);
