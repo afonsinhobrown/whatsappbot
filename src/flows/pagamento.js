@@ -103,6 +103,20 @@ export async function handlePagamentoHefelgymId(client, ctx, text, send) {
     return send("Operação cancelada. Voltamos ao menu principal.");
   }
   ctx.hefelgymId = text.trim();
+
+  // Validar atleta no SaaS (Gymar)
+  if (ctx.produto) {
+    await send(`⏳ A procurar o atleta no sistema ${ctx.produto}...`);
+    const check = await validarContaSaaS(ctx.produto, ctx.hefelgymId, "");
+    if (!check.valid) {
+      return send(`❌ *Atleta não encontrado!* O nome ou código "${ctx.hefelgymId}" não existem no Gymar.\n\nPor favor, digite novamente (ou "0" para cancelar):`);
+    }
+    if (check.user && check.user.name) {
+      ctx.contaNome = check.user.name;
+      await send(`✅ *Atleta confirmado:* Olá, ${check.user.name}!`);
+    }
+  }
+
   return createLicencaAndAskMetodo(client, ctx, send);
 }
 
