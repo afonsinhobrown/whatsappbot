@@ -70,8 +70,8 @@ export async function validarContaSaaS(produtoNome, username, password) {
     // Gymar (HefelGym) - Atleta insere nome ou código em vez de utilizador/senha
     if (sistema === "GYMAR") {
       isGymar = true;
-      // Procura por nome ou código
-      queryStr = 'SELECT id, nome as name, codigo FROM atleta WHERE nome ILIKE $1 OR codigo = $1';
+      // Procura por nome ou ID
+      queryStr = 'SELECT id, name, name as name FROM clients WHERE name ILIKE $1 OR id::text = $1';
       values = [username];
     } else {
       values = [username, password];
@@ -118,11 +118,11 @@ export async function ativarLicenca(produtoNome, username, meses = 1) {
     
     switch (sistema) {
       case "GYMAR":
-        // Pagar mensalidade do atleta
-        userRes = await queryDual("GYMAR", 'SELECT id FROM atleta WHERE nome ILIKE $1 OR codigo = $1', [username]);
+        // Atualizar mensalidade do atleta na tabela clients (Gymar)
+        userRes = await queryDual("GYMAR", 'SELECT id FROM clients WHERE name ILIKE $1 OR id::text = $1', [username]);
         if (userRes.rows.length > 0) {
           const atletaId = userRes.rows[0].id;
-          await queryDual("GYMAR", "UPDATE mensalidade SET status = 'PAGO', data_fim = GREATEST(data_fim, CURRENT_TIMESTAMP) + interval '1 month' * $1 WHERE atleta_id = $2", [meses, atletaId]);
+          await queryDual("GYMAR", "UPDATE clients SET status = 'ativo', end_date = GREATEST(end_date, CURRENT_TIMESTAMP) + interval '1 month' * $1 WHERE id = $2", [meses, atletaId]);
           return true;
         }
         break;
