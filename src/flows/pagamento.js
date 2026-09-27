@@ -19,8 +19,8 @@ function metodosTexto(descricao, valor) {
 }
 
 /**
- * Escolha do plano (opção 2): cria licença pendente + pagamento pendente
- * e pede o método de pagamento.
+ * Escolha do plano (opção 2): em vez de criar logo o pagamento, 
+ * pergunta pelas credenciais do sistema ou ID do ginásio.
  */
 export async function handlePlanoContratar(client, ctx, text, send) {
   const planos = ctx.planos || [];
@@ -42,6 +42,61 @@ export async function handlePlanoContratar(client, ctx, text, send) {
     return send('Plano não encontrado. Escreva "menu" para voltar.');
   }
 
+  // Prepara o contexto
+  const newCtx = { planoId, preco: plano.preco, produto: plano.produto, nome_plano: plano.nome_plano };
+
+  const produtoNomeLower = plano.produto.toLowerCase();
+  
+  // Se for o sistema do ginásio (hefelgym / gymar)
+  if (produtoNomeLower.includes("hefelgym") || produtoNomeLower.includes("gym")) {
+    await setSession(client.id, "pagamento_hefelgym_id", newCtx);
+    return send(`Para pagar a mensalidade do *${plano.produto}*:\n\nPor favor, digite o seu *Nome completo* ou o seu *ID de cliente* do ginásio:`);
+  } else {
+    // SaaS normal: pedir utilizador
+    await setSession(client.id, "pagamento_saas_user", newCtx);
+    return send(`Para processar a licença do sistema *${plano.produto}*:\n\nPor favor, digite o *Usuário (username)* que usa para aceder à sua conta no sistema:`);
+  }
+}
+
+export async function handlePagamentoSaasUser(client, ctx, text, send) {
+  if (text.trim() === "0") {
+    await setSession(client.id, "menu", {});
+    return send("Operação cancelada. Voltamos ao menu principal.");
+  }
+  ctx.saasUser = text.trim();
+  await setSession(client.id, "pagamento_saas_senha", ctx);
+  return send(`Excelente. Agora, por favor, digite a sua *Senha* para validar a conta do sistema *${ctx.produto}*:`);
+}
+
+export async function handlePagamentoSaasSenha(client, ctx, text, send) {
+  if (text.trim() === "0") {
+    await setSession(client.id, "menu", {});
+    return send("Operação cancelada. Voltamos ao menu principal.");
+  }
+  ctx.saasSenha = text.trim();
+  return createLicencaAndAskMetodo(client, ctx, send);
+}
+
+export async function handlePagamentoHefelgymId(client, ctx, text, send) {
+  if (text.trim() === "0") {
+    await setSession(client.id, "menu", {});
+    return send("Operação cancelada. Voltamos ao menu principal.");
+  }
+  ctx.hefelgymId = text.trim();
+  return createLicencaAndAskMetodo(client, ctx, send);
+}
+
+/** 
+ * Cria as entradas na BD (licenca e pagamento pendentes)
+ * e pede o método de pagamento (e-Mola, M-Pesa, Visa).
+ */
+async function createLicencaAndAskMetodo(client, ctx, send) {
+  const { planoId, preco, produto, nome_plano, saasUser, saasSenha, hefelgymId } = ctx;
+  
+  // Os dados extra (user/senha/id) podem ser guardados nas observações da licença ou num campo JSON.
+  // Como não há schema visível para isso na instrução, registamos no console e associamos o pagamento
+  const dadosConta = hefelgymId ? `[Gym ID: ${hefelgymId}]` : `[SaaS User: ${saasUser} | Senha: ${saasSenha}]`;
+  
   const lic = await query(
     `INSERT INTO licencas (tenant_id, cliente_id, plano_id, status)
      VALUES ($1, $2, $3, 'pendente') RETURNING id`,
@@ -52,19 +107,21 @@ export async function handlePlanoContratar(client, ctx, text, send) {
   const pag = await query(
     `INSERT INTO pagamentos (tenant_id, cliente_id, referencia_tipo, referencia_id, valor, moeda, status)
      VALUES ($1, $2, 'licenca', $3, $4, 'MZN', 'pendente') RETURNING id`,
-    [client.tenant_id, client.id, licencaId, plano.preco]
+    [client.tenant_id, client.id, licencaId, preco]
   );
   const pagamentoId = pag.rows[0].id;
 
-  const descricao = `*${plano.produto} — ${plano.nome_plano}*`;
+  const descricao = `*${produto} — ${nome_plano}*`;
+  
   await setSession(client.id, "pagamento_metodo", {
     licencaId,
     pagamentoId,
-    valor: plano.preco,
+    valor: preco,
     descricao,
   });
-  console.log(`[ADMIN] Licença #${licencaId} pendente (cliente ${client.whatsapp_number}), pagamento #${pagamentoId}`);
-  return send(metodosTexto(descricao, plano.preco));
+  
+  console.log(`[ADMIN] Licença #${licencaId} pendente (cliente ${client.whatsapp_number}), pagamento #${pagamentoId}. Conta do cliente: ${dadosConta}`);
+  return send(metodosTexto(descricao, preco));
 }
 
 /** Escolha do método de pagamento. */

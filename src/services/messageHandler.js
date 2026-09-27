@@ -10,7 +10,14 @@ import {
   handleCotacaoDescricao,
 } from "../flows/cotacao.js";
 import { showProdutos, handlePlanoEscolha } from "../flows/planos.js";
-import { showPagamento, handlePlanoContratar, handlePagamentoMetodo } from "../flows/pagamento.js";
+import {
+  showPagamento,
+  handlePlanoContratar,
+  handlePagamentoMetodo,
+  handlePagamentoSaasUser,
+  handlePagamentoSaasSenha,
+  handlePagamentoHefelgymId
+} from "../flows/pagamento.js";
 import { falarComHumano } from "../flows/humano.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
@@ -74,6 +81,12 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return handlePlanoEscolha(client, ctx, text, send);
     case "planos_plano":
       return handlePlanoContratar(client, ctx, text, send);
+    case "pagamento_saas_user":
+      return handlePagamentoSaasUser(client, ctx, text, send);
+    case "pagamento_saas_senha":
+      return handlePagamentoSaasSenha(client, ctx, text, send);
+    case "pagamento_hefelgym_id":
+      return handlePagamentoHefelgymId(client, ctx, text, send);
     case "pagamento_metodo":
       return handlePagamentoMetodo(client, ctx, text, send);
     case "humano":
