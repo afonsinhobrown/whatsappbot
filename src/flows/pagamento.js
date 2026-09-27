@@ -1,6 +1,7 @@
 import { query } from "../services/dbService.js";
 import { setSession } from "../services/sessionService.js";
 import { validarXonguile } from "../services/saasService.js";
+import { createPaySuiteCharge } from "../services/paysuiteService.js";
 
 const METODOS = { 1: "emola", 2: "mpesa", 3: "visa" };
 const METODO_LABEL = { emola: "e-Mola", mpesa: "M-Pesa", visa: "Visa" };
@@ -154,13 +155,29 @@ export async function handlePagamentoMetodo(client, ctx, text, send) {
     `[ADMIN] Pagamento #${ctx.pagamentoId} (${METODO_LABEL[metodo]}) para ${descricao} — aguarda confirmação`
   );
 
+  let extraMessage = "📲 A integração de pagamento automático (PaySuite/Netshop) está a ser concluída.\nEntretanto, pode enviar o comprovativo aqui.";
+
+  // Se o método for e-Mola, gerar link da PaySuite automaticamente
+  if (metodo === "emola") {
+    try {
+      await send("⏳ A gerar link de pagamento na PaySuite para o e-Mola...");
+      const charge = await createPaySuiteCharge(ctx.valor, ctx.pagamentoId);
+      
+      if (charge.checkoutUrl) {
+        extraMessage = `✅ *Link de Pagamento e-Mola gerado com sucesso!*\n\nPor favor, clique no link abaixo para inserir o seu número e confirmar o pagamento:\n🔗 ${charge.checkoutUrl}\n\nApós o pagamento, a sua licença será ativada!`;
+      }
+    } catch (err) {
+      console.error("Erro na PaySuite:", err);
+      extraMessage = "⚠️ Ocorreu um erro ao gerar o link automático da PaySuite.\nPor favor, efetue o pagamento manualmente e envie o comprovativo aqui.";
+    }
+  }
+
   return send(
     `Método registado: *${METODO_LABEL[metodo]}*\n` +
       `Referência: pagamento *${ctx.pagamentoId}*\n` +
       `Valor: ${formatMoney(ctx.valor)}\n\n` +
-      "📲 A integração de pagamento automático (PaySuite/Netshop) está a ser concluída.\n" +
-      'Entretanto, pode enviar o comprovativo aqui ou escrever "5" para falar com um humano.\n\n' +
-      'Escreva "menu" para voltar.'
+      `${extraMessage}\n\n` +
+      'Escreva "5" para falar com um humano, ou "menu" para voltar.'
   );
 }
 
