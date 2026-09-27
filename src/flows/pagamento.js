@@ -1,5 +1,6 @@
 import { query } from "../services/dbService.js";
 import { setSession } from "../services/sessionService.js";
+import { validarXonguile } from "../services/saasService.js";
 
 const METODOS = { 1: "emola", 2: "mpesa", 3: "visa" };
 const METODO_LABEL = { emola: "e-Mola", mpesa: "M-Pesa", visa: "Visa" };
@@ -74,6 +75,20 @@ export async function handlePagamentoSaasSenha(client, ctx, text, send) {
     return send("Operação cancelada. Voltamos ao menu principal.");
   }
   ctx.saasSenha = text.trim();
+
+  // Validar automaticamente se for o Xonguile
+  if (ctx.produto && ctx.produto.toLowerCase().includes("xonguile")) {
+    await send("⏳ A validar a sua conta no Xonguile...");
+    const check = await validarXonguile(ctx.saasUser, ctx.saasSenha);
+    if (!check.valid) {
+      await setSession(client.id, "pagamento_saas_user", ctx);
+      return send("❌ *Credenciais inválidas!* O Utilizador ou a Senha não estão corretos.\n\nPor favor, digite novamente o seu *Usuário (username)* (ou \"0\" para cancelar):");
+    }
+    // Se for válido, anexamos o nome verdadeiro da conta ao contexto
+    ctx.contaNome = check.user.name;
+    await send(`✅ *Conta confirmada:* Olá, ${check.user.name}!`);
+  }
+
   return createLicencaAndAskMetodo(client, ctx, send);
 }
 
