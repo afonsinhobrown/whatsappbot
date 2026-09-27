@@ -70,8 +70,8 @@ export async function validarContaSaaS(produtoNome, username, password) {
     // Gymar (HefelGym) - Atleta insere nome ou código em vez de utilizador/senha
     if (sistema === "GYMAR") {
       isGymar = true;
-      // Procura por nome ou ID e junta com o plano para descobrir o preço a pagar
-      queryStr = 'SELECT c.id, c.name, p.price as fee FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.name ILIKE $1 OR c.id::text = $1';
+      // Procura por nome ou ID e junta com o plano para descobrir o preço a pagar já com 16% IVA
+      queryStr = 'SELECT c.id, c.name, (p.price * 1.16) as fee FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.name ILIKE $1 OR c.id::text = $1';
       values = [username];
     } else {
       values = [username, password];
