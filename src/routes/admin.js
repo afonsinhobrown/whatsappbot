@@ -211,11 +211,37 @@ router.post("/paysuite-webhook", async (req, res) => {
   const body = req.body || {};
   const data = body.data || body;
   const paysuiteId = data.id || data.payment_id || data.payment;
+  const evento = String(body.event || "").toLowerCase();
 
-  console.log(`[PAYSUITE] webhook recebido: id=${paysuiteId}`);
+  // A PaySuite assina o corpo com X-Signature (HMAC-SHA256 do webhook secret).
+  // Sem esta validação, qualquer pessoa poderia forjar um "pagamento".
+  if (env.paysuiteWebhookSecret) {
+    const assinatura = req.headers["x-signature"];
+    if (!assinatura || !req.rawBody) {
+      return res.status(401).json({ error: "assinatura ausente" });
+    }
+    const esperada = crypto
+      .createHmac("sha256", env.paysuiteWebhookSecret)
+      .update(req.rawBody)
+      .digest("hex");
+    const ok =
+      assinatura.length === esperada.length &&
+      crypto.timingSafeEqual(Buffer.from(assinatura), Buffer.from(esperada));
+    if (!ok) return res.status(401).json({ error: "assinatura inválida" });
+  } else {
+    console.warn("[PAYSUITE] PAYSUITE_WEBHOOK_SECRET não definido: webhook aceite sem validação");
+  }
+
+  console.log(`[PAYSUITE] webhook: evento=${evento || "(sem evento)"} id=${paysuiteId}`);
 
   if (!paysuiteId) {
     return res.status(400).json({ error: "pedido sem id" });
+  }
+
+  // Só o evento de sucesso é motivo para verificar. Pagamentos falhados,
+  // estornos e outros eventos não activam nada.
+  if (evento && evento !== "payment.success") {
+    return res.json({ ok: true, accao: "ignorado", evento });
   }
 
   // O webhook é apenas um aviso. Quem confirma é o confirmarPagamento(),

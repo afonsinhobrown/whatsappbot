@@ -10,6 +10,10 @@ const METODO_LABEL = { emola: "e-Mola", mpesa: "M-Pesa", visa: "Visa", cartao: "
 // Estados que a PaySuite usa para dizer "o dinheiro entrou".
 const ESTADOS_PAGOS = new Set(["paid", "completed", "confirmed", "succeeded"]);
 
+// Comandos que o messageHandler trata globalmente (menu, cancelar, voltar...).
+// Repetidos aqui para que o cliente nunca fique preso neste estado.
+const COMANDOS_MENU = ["menu", "inicio", "voltar", "cancelar", "0", "sair"];
+
 function formatMoney(value) {
   const n = Number(value);
   if (Number.isNaN(n)) return String(value);
@@ -252,14 +256,29 @@ export async function handlePagamentoHefelgymId(client, ctx, text, send) {
  * pagamento em vez de voltar a perguntar o método.
  */
 export async function handlePagamentoMetodo(client, ctx, text, send) {
-  if (text.trim() === "0" || text.trim().toLowerCase() === "menu") {
+  const texto = text.trim().toLowerCase();
+
+  if (texto === "0" || texto === "menu" || COMANDOS_MENU.includes(texto)) {
     await setSession(client.id, "menu", {});
     return send("Operação cancelada. Voltamos ao menu principal.");
   }
+
   if (!ctx.pagamentoId) {
     await setSession(client.id, "menu", {});
     return send('Não encontrei um pagamento pendente. Escreva "menu" para voltar.');
   }
+
+  // O pagamento pode ter sido apagado ou já estar confirmado. Sem esta
+  // verificação o cliente ficava preso neste estado para sempre.
+  const atual = await query("SELECT status FROM pagamentos WHERE id = $1", [ctx.pagamentoId]);
+  if (!atual.rows[0] || atual.rows[0].status === "confirmado") {
+    await setSession(client.id, "menu", {});
+    return send(
+      "O pagamento anterior já não está pendente. 🔄\n\n" +
+        'Escreva "2" para ver os planos ou "menu" para o menu principal.'
+    );
+  }
+
   return abrirPaginaPagamento(
     client,
     ctx.pagamentoId,
@@ -300,20 +319,24 @@ export async function confirmarPagamento(paysuiteId, opcoes = {}) {
   if (!pagamento) return { ok: false, motivo: "pagamento não encontrado" };
   if (pagamento.status === "confirmado") return { ok: true, jaConfirmado: true };
 
-  // 1) A PaySuite é a fonte da verdade. Sem isto, qualquer bug dava uma
-  //    licença de graça e activava contas reais de clientes.
+  // 1) A PaySuite é a fonte da verdade. Sem isto, qualquer bug daria uma
+  //    licença de graça e activaria contas reais de clientes.
+  //    O endpoint GET só devolve `status` quando o pagamento está pago, e
+  //    traz o objecto `transaction` nesse caso.
   const situacao = await getPaySuiteCharge(String(paysuiteId));
-  const estadoPaySuite = String(situacao.status || "").toLowerCase();
+  const estadoPaySuite = String(situacao.status || (situacao.transaction && situacao.transaction.status) || "").toLowerCase();
   const pago = ESTADOS_PAGOS.has(estadoPaySuite);
   console.log(
-    `[PAGAMENTO] #${pagamento.id} PaySuite diz "${estadoPaySuite}" (pretendido ${formatMoney(pagamento.valor)})`
+    `[PAGAMENTO] #${pagamento.id} PaySuite diz "${estadoPaySuite || "sem estado"}" ` +
+      `(pretendido ${formatMoney(pagamento.valor)})`
   );
 
   if (!pago) {
-    if (opcoes.somenteConsulta) {
-      return { ok: false, motivo: "pagamento ainda não confirmado", paysuite_status: estadoPaySuite };
-    }
-    return { ok: false, motivo: `PaySuite não confirma o pagamento (estado: ${estadoPaySuite || "desconhecido"})` };
+    return {
+      ok: false,
+      motivo: "pagamento ainda não confirmado",
+      paysuite_status: estadoPaySuite || "pendente",
+    };
   }
 
   // 2) A PaySuite não diz qual a licença; conferimos que o valor pedido

@@ -20,6 +20,8 @@ export const env = {
     .split(",")
     .map((n) => n.replace(/\D/g, ""))
     .filter(Boolean),
+  // Segredo do webhook da PaySuite (definições > API Access no painel).
+  paysuiteWebhookSecret: process.env.PAYSUITE_WEBHOOK_SECRET || "",
 };
 
 export function isMetaConfigured() {
