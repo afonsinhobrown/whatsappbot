@@ -47,6 +47,16 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       const targetPhone = parts[1];
       const replyText = parts.slice(2).join(" ");
       await sendTextMessage(targetPhone, `👨‍💻 *Atendimento:* ${replyText}`, tenant);
+      
+      try {
+        const targetClient = await getClientByWhatsapp(tenant.id, targetPhone);
+        if (targetClient) {
+          await setSession(targetClient.id, "humano", { desde: new Date().toISOString() });
+        }
+      } catch (err) {
+        console.error("Erro ao actualizar estado do cliente para humano:", err);
+      }
+
       return sendTextMessage(phone, `✅ Mensagem enviada para ${targetPhone}.`, tenant);
     } else {
       return sendTextMessage(phone, `❌ Erro no comando. Use: !responder NUMERO MENSAGEM`, tenant);
