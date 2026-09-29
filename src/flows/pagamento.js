@@ -473,47 +473,85 @@ export async function handlePagamentoBuscarConta(client, ctx, text, send) {
   }
 
   let msg = `💳 Licenças para a conta *${texto}*:\n\n`;
-  let pendente = null;
+  const licencasIds = [];
 
   for (const l of rows) {
     msg += `#${l.id} — ${l.produto || "?"} (${l.nome_plano || "?"}) · ${l.status}\n`;
     if (l.pagamento_id) {
       msg += `   Pagamento #${l.pagamento_id}: ${l.pagamento_status}\n`;
-      if (l.pagamento_status === "pendente" && !pendente) {
-        pendente = {
-          pagamentoId: l.pagamento_id,
-          valor: Number(l.valor ?? l.preco),
-          descricao: `${l.produto} — ${l.nome_plano}`,
-          checkoutUrl: l.paysuite_checkout_url,
-        };
-      }
     }
     msg += "\n";
+    if (!licencasIds.includes(l.id)) licencasIds.push(l.id);
   }
 
-  if (!pendente) {
-    msg += 'Não há pagamentos pendentes para esta conta. Escreva "menu" para voltar.';
+  msg += 'Qual licença deseja pagar ou renovar? Digite apenas o número (ex: ' + licencasIds[0] + ').\n\n' +
+         '(escreva "0" para voltar)';
+
+  await setSession(client.id, "pagamento_escolher_licenca", { emailOuId: texto });
+  return send(msg);
+}
+
+export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
+  const texto = text.trim();
+  if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
     await setSession(client.id, "menu", {});
-    return send(msg);
+    return send("Operação cancelada. Voltamos ao menu principal.");
   }
 
-  await setSession(client.id, "pagamento_metodo", pendente);
-
-  if (pendente.checkoutUrl) {
-    return send(
-      msg +
-        `Ainda tem um pagamento por fazer: *${pendente.descricao}* — ${formatMoney(pendente.valor)}\n\n` +
-        "Abra esta página para pagar:\n" +
-        `🔗 ${pendente.checkoutUrl}\n\n` +
-        'Escreva "menu" para voltar.'
-    );
+  const licencaId = parseInt(texto, 10);
+  if (isNaN(licencaId)) {
+    return send('Por favor, digite um número de licença válido ou "0" para cancelar.');
   }
 
-  return abrirPaginaPagamento(
-    client,
-    pendente.pagamentoId,
-    pendente.valor,
-    pendente.descricao,
-    send
+  // Verificar se a licença pertence à conta inserida
+  const { rows } = await query(
+    `SELECT l.id, l.status, pl.preco, pl.nome_plano, pr.nome AS produto
+       FROM licencas l
+       LEFT JOIN planos pl ON pl.id = l.plano_id
+       LEFT JOIN produtos pr ON pr.id = pl.produto_id
+      WHERE l.tenant_id = $1 AND l.id = $2 AND LOWER(l.dados_conta->>'valor') = LOWER($3)`,
+    [client.tenant_id, licencaId, ctx.emailOuId]
   );
+
+  const licenca = rows[0];
+  if (!licenca) {
+    return send('Licença não encontrada para esta conta. Tente outro número ou "0" para cancelar.');
+  }
+
+  // Verificar se já existe um pagamento pendente para esta licença
+  const pag = await query(
+    `SELECT id, valor, paysuite_checkout_url FROM pagamentos 
+      WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND status = 'pendente' 
+      ORDER BY id DESC LIMIT 1`,
+    [licencaId]
+  );
+
+  const descricao = `${licenca.produto} — ${licenca.nome_plano}`;
+  let pagamentoId;
+  let valor;
+
+  if (pag.rows.length > 0) {
+    // Reutilizar o pagamento pendente existente
+    pagamentoId = pag.rows[0].id;
+    valor = pag.rows[0].valor;
+  } else {
+    // Criar um NOVO pagamento para renovação
+    valor = licenca.preco;
+    const novoPag = await query(
+      `INSERT INTO pagamentos (tenant_id, cliente_id, referencia_tipo, referencia_id, valor, moeda, status)
+       VALUES ($1, $2, 'licenca', $3, $4, 'MZN', 'pendente') RETURNING id`,
+      [client.tenant_id, client.id, licencaId, valor]
+    );
+    pagamentoId = novoPag.rows[0].id;
+    console.log(`[ADMIN] Novo pagamento para renovação #${pagamentoId} da licença #${licencaId}`);
+  }
+
+  await setSession(client.id, "pagamento_metodo", {
+    licencaId,
+    pagamentoId,
+    valor,
+    descricao,
+  });
+
+  return abrirPaginaPagamento(client, pagamentoId, valor, descricao, send);
 }
