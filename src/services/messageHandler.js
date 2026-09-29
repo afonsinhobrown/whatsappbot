@@ -76,7 +76,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     case "cotacao_produto_lista":
       return handleCotacaoProdutoLista(client, ctx, text, send);
     case "cotacao_descricao":
-      return handleCotacaoDescricao(client, ctx, text, send);
+      return handleCotacaoDescricao(client, ctx, text, send, tenant);
     case "planos_lista":
       return handlePlanoEscolha(client, ctx, text, send);
     case "planos_plano":

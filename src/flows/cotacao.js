@@ -63,7 +63,7 @@ export async function handleCotacaoProdutoLista(client, ctx, text, send) {
   return send(msg + `\n\nDescreva, por favor, o que precisa para *${nome}* (quantidade, prazo, etc.).`);
 }
 
-export async function handleCotacaoDescricao(client, ctx, text, send) {
+export async function handleCotacaoDescricao(client, ctx, text, send, tenant) {
   const descricao = text.trim();
   if (descricao.length < 5) {
     return send("Descreva um pouco mais, por favor.");
@@ -79,6 +79,17 @@ export async function handleCotacaoDescricao(client, ctx, text, send) {
 
   await setSession(client.id, "menu", {});
   console.log(`[ADMIN] Nova cotação de ${client.whatsapp_number} (${tipoPedido}): ${prefixo}${descricao}`);
+
+  const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER || "";
+  if (adminPhone) {
+    import("../services/metaApi.js").then(({ sendTextMessage }) => {
+      sendTextMessage(
+        adminPhone,
+        `📝 *Nova Cotação / Orçamento* 📝\nCliente: ${client.nome || "Desconhecido"} (${client.whatsapp_number})\nTipo: ${tipoPedido}\nDetalhes: ${prefixo}${descricao}\n\n_Para responder, escreva: !responder ${client.whatsapp_number} a sua mensagem_`,
+        tenant
+      ).catch(console.error);
+    });
+  }
 
   return send(
     "✅ Cotação recebida!\n" +
