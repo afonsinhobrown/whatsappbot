@@ -1,71 +1,77 @@
 # Relatório — Bot WhatsApp TECNOINCUBADORA
 
-> Data: 27/09/2026
-> Estado: **deploy no ar, mas o bot NÃO responde** — token da Meta expirado. 🔴
+> Data: 29/09/2026
+> Estado: **deploy no ar e bot a responder.** O token que está a funcionar está
+> gravado na BD (`tenants.token`), não no Vercel. Ver secção 0.
 
 ---
 
 ## 0. O QUE FAZER AGORA (ler primeiro)
 
-### O único bloqueio
+### Se o bot estiver calado: o token expirou
 
-O `WHATSAPP_TOKEN` do Vercel **expirou**. Diagnóstico confirmado em 27/09/2026
-contra a Graph API:
+Não é código. O webhook recebe a mensagem e grava na BD (clientes/sessões
+actualizadas), mas o envio falha com `OAuthException 190 / subcode 463` e o erro
+é engolido pelo `try/catch` — por isso "não acontece nada".
 
-```
-OAuthException 190 / subcode 463
-"Error validating access token: Session has expired on 27-Sep-26 07:00:00 PDT"
-```
+Confirma em 5 segundos pela BD: se `clientes.ultima_interacao` está a avançar e
+`bot_sessoes.updated_at` não, o bot recebeu e **não** respondeu.
 
-**Consequência:** o webhook continua a *receber* mensagens e a gravá-las na BD
-(clientes e sessões criados hoje às 14:20, 14:22 e 15:23 comprovam que o handler
-corre), mas o `sendTextMessage` falha e o bot fica **mudo**. O erro é engolido
-pelo `try/catch` do webhook — por isso parece que "não acontece nada".
+### Rotação rápida de token (SEGUNDOS, sem deploy)
 
-### Como obter um token que funcione hoje
+O token vive em `tenants.token`. `src/services/metaApi.js:12` dá prioridade ao
+token do tenant, logo o Vercel é irrelevante enquanto esta coluna estiver
+preenchida. **Não é preciso `vercel deploy`.**
 
-O **Temporary access token** serve e **não tem a regra dos 7 dias**.
-Para chegar lá (por cliques, os links directos redirecionam):
-
-1. `developers.facebook.com/apps` → lista das tuas apps
-2. Abrir a app que tem o produto **WhatsApp**
-3. Na barra lateral esquerda → **WhatsApp**
-4. Aba **API Setup**
-5. Campo **"Temporary access token"** no topo → mostrar e copiar o `EA...`
-
-Depois de o ter:
-
-```bash
-vercel env rm WHATSAPP_TOKEN production -y
-vercel env add WHATSAPP_TOKEN production     # cola o token
-vercel deploy --prod --yes
+```sql
+UPDATE tenants SET token = '<token novo>' WHERE id = 1;
 ```
 
-Durar ~24h. Serve para repor o serviço; não é a solução definitiva.
+Ou pelo painel `/admin` (a tabela `tenants` está entre as tabelas geridas).
 
-### Como confirmar que ficou bom
-
-Existe um endpoint de diagnóstico (protegido pela password do admin, não expõe
-segredos). Faz login em `/admin` e chama:
+Validar o token **antes** de gravar, para não gravar lixo:
 
 ```
-GET  /admin/api/meta-status      -> { ok, phone_number_id, numero, erro }
-POST /admin/api/meta-test-send   -> body: { "to": "258XXXXXXXXX" }  (envia msg de teste)
+GET https://graph.facebook.com/v20.0/1349279428267688
+     ?fields=display_phone_number,verified_name
+     &access_token=<token>
 ```
 
-Esperado: `ok: true`, `phone_number_id: "1349279428267688"`,
-`numero: "+258 86 139 0985"`.
+`display_phone_number: "+258 86 139 0985"` = token bom. E ver a validade:
 
-### Token permanente — bloqueado por ~7 dias
+```
+GET /v20.0/debug_token?input_token=<token>   →  expires_at
+```
 
-A Meta recusa a criação de Admin System Users a partir de um system user com
-menos de 7 dias:
+### De onde copiar o token (importante: a duração varia)
+
+| Origem | Duração | Prefixo |
+|---|---|---|
+| WhatsApp → **API Setup** → *Temporary access token* | **24h** | `EAAPepYGwfAkBSq…` |
+| App Dashboard (token de developer) | **~1h** | `EAAPepYGwfAkBSm…` |
+
+**Usa sempre o do API Setup.** O do App Dashboard morre em ~1 hora e apanha o
+bot a meio do dia.
+
+### Token permanente — a partir de ~4 de Outubro
+
+A Meta recusa Admin System Users com menos de 7 dias:
 
 > "The Admin System User must be at least 7 days old before creating other Admin System Users."
 
-O system user `tecnoincubadora-bot` **já foi criado** e está a envelhecer.
-Quando completar 7 dias, repetir os passos de token acima mas com
-**Token expiration: Never** → nunca mais se repete isto.
+O system user `tecnoincubadora-bot` foi criado a 27/09/2026. Passados 7 dias
+(≈**4 de Outubro**) faz-se o token com **Token expiration: Never** e grava-se
+com o `UPDATE` acima. Acabou-se o tema.
+
+Ao gerar o token permanente, confirmar que devolve `expires_at: 0`.
+
+### O que NÃO fazer
+
+- ❌ `vercel env add` + `vercel deploy` para cada token. Um deploy demora >5 min
+  e o token temporário pode expirar a meio. A coluna `tenants.token` evita isso.
+- ⚠️ Este repositório tem o `.vercel` local ligado ao projecto certo
+  (`tecnoincubadora-admin-bots`). Confirma com `vercel link --project <nome>`
+  antes de qualquer deploy, senão publicas na app errada.
 
 ---
 

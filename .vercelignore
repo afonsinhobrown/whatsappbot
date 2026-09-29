@@ -1,0 +1,6 @@
+.env*
+vercel-env.txt
+check_*.mjs
+check_*.js
+test_token.mjs
+insert_mozteles_plan.mjs

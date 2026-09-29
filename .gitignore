@@ -8,3 +8,5 @@ coverage/
 
 .vercel
 .env*
+vercel-env.txt
+test_token.mjs

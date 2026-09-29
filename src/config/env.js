@@ -14,6 +14,12 @@ export const env = {
   phoneNumberId: process.env.PHONE_NUMBER_ID || "",
   databaseUrl: process.env.DATABASE_URL || "",
   adminPassword: process.env.ADMIN_PASSWORD || "",
+  publicUrl: (process.env.PUBLIC_URL || "").replace(/\/+$/, ""),
+  // Números que recebem aviso de cada venda/pagamento (o dono, por exemplo).
+  adminNumbers: (process.env.ADMIN_NUMBERS || "")
+    .split(",")
+    .map((n) => n.replace(/\D/g, ""))
+    .filter(Boolean),
 };
 
 export function isMetaConfigured() {

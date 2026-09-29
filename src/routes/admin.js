@@ -10,6 +10,7 @@ import {
   isDbConfigured,
 } from "../services/dbService.js";
 import { sendTextMessage } from "../services/metaApi.js";
+import { confirmarPagamento } from "../flows/pagamento.js";
 
 const router = Router();
 const COOKIE = "tecno_admin";
@@ -198,6 +199,62 @@ router.post("/meta-test-send", requireAuth, async (req, res) => {
     res.json({ ok: true, result: await sendTextMessage(to, text) });
   } catch (err) {
     res.status(502).json({ ok: false, erro: err.message });
+  }
+});
+
+/**
+ * Webhook da PaySuite: a PaySuite avisa aqui quando um pagamento é
+ * confirmado. Não exige login (é a PaySuite que chama), por isso valida
+ * o pedido contra a API antes de confiar nele.
+ */
+router.post("/paysuite-webhook", async (req, res) => {
+  const body = req.body || {};
+  const data = body.data || body;
+  const paysuiteId = data.id || data.payment_id || data.payment;
+
+  console.log(`[PAYSUITE] webhook recebido: id=${paysuiteId}`);
+
+  if (!paysuiteId) {
+    return res.status(400).json({ error: "pedido sem id" });
+  }
+
+  // O webhook é apenas um aviso. Quem confirma é o confirmarPagamento(),
+  // que vai perguntar à PaySuite se o dinheiro entrou.
+  try {
+    const r = await confirmarPagamento(paysuiteId);
+
+    // Ainda não pago: normal, o cliente pode estar a concluir o checkout.
+    // A PaySuite avisa de novo quando mudar.
+    if (!r.ok && r.motivo === "pagamento ainda não confirmado") {
+      return res.json({ ok: true, accao: "aguarda_pagamento", paysuite_status: r.paysuite_status });
+    }
+    if (!r.ok) return res.status(404).json(r);
+    if (r.jaConfirmado) return res.json({ ok: true, accao: "ja_confirmado" });
+
+    // Avisa o cliente no WhatsApp.
+    if (r.whatsapp) {
+      try {
+        await sendTextMessage(
+          r.whatsapp,
+          `✅ *Pagamento confirmado!*\n\n` +
+            `${r.produto || "Licença"} — ${r.plano || ""}\n` +
+            `Valor: ${Number(r.valor).toLocaleString("pt-MZ", { minimumFractionDigits: 2 })} MZN\n\n` +
+            `A sua licença está activa até ${r.data_expiracao.slice(0, 10)}.\n` +
+            (r.sausActivado === true
+              ? "A sua conta no sistema já foi actualizada."
+              : r.sausActivado === false
+                ? "A conta no sistema será actualizada pela nossa equipa."
+                : "")
+        );
+      } catch (err) {
+        console.error("[PAYSUITE] não consegui avisar o cliente:", err.message);
+      }
+    }
+
+    return res.json({ ok: true, accao: "licenca_activada", ...r });
+  } catch (err) {
+    console.error("[PAYSUITE] erro ao confirmar pagamento:", err);
+    return res.status(500).json({ ok: false, erro: err.message });
   }
 });
 

@@ -55,7 +55,7 @@ export async function handleCotacaoProdutoLista(client, ctx, text, send) {
     return send('Escolha um número válido da lista, ou "0" para voltar.');
   }
 
-  const { nome, msg } = await productPlansMessage(client.tenant_id, ids[n - 1]);
+  const { nome, msg } = await productPlansMessage(client, ids[n - 1]);
   await setSession(client.id, "cotacao_descricao", {
     tipoPedido: "produto_existente",
     produto: nome,
