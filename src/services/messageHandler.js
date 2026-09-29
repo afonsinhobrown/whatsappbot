@@ -16,7 +16,8 @@ import {
   handlePagamentoMetodo,
   handlePagamentoSaasUser,
   handlePagamentoSaasSenha,
-  handlePagamentoHefelgymId
+  handlePagamentoHefelgymId,
+  handlePagamentoBuscarConta
 } from "../flows/pagamento.js";
 import { falarComHumano } from "../flows/humano.js";
 
@@ -91,6 +92,8 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return handlePlanoEscolha(client, ctx, text, send);
     case "planos_plano":
       return handlePlanoContratar(client, ctx, text, send);
+    case "pagamento_buscar_conta":
+      return handlePagamentoBuscarConta(client, ctx, text, send);
     case "pagamento_saas_user":
       return handlePagamentoSaasUser(client, ctx, text, send);
     case "pagamento_saas_senha":

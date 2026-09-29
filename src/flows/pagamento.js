@@ -436,6 +436,21 @@ async function clienteWhatsapp(clienteId) {
 
 /** Opção 3 do menu — as licenças/pagamentos do cliente. */
 export async function showPagamento(client, send) {
+  await setSession(client.id, "pagamento_buscar_conta", {});
+  return send(
+    "Para qual conta deseja pagar a licença?\n\n" +
+    "Por favor, digite o *email* ou o *ID de cliente* associado à licença:\n\n" +
+    '(escreva "0" para voltar)'
+  );
+}
+
+export async function handlePagamentoBuscarConta(client, ctx, text, send) {
+  const texto = text.trim();
+  if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
+    await setSession(client.id, "menu", {});
+    return send("Operação cancelada. Voltamos ao menu principal.");
+  }
+
   const { rows } = await query(
     `SELECT l.id, l.status,
             pl.nome_plano, pl.preco, pr.nome AS produto,
@@ -445,20 +460,19 @@ export async function showPagamento(client, send) {
        LEFT JOIN planos pl ON pl.id = l.plano_id
        LEFT JOIN produtos pr ON pr.id = pl.produto_id
        LEFT JOIN pagamentos pg ON pg.referencia_tipo = 'licenca' AND pg.referencia_id = l.id
-      WHERE l.cliente_id = $1
+      WHERE l.tenant_id = $1 AND LOWER(l.dados_conta->>'valor') = LOWER($2)
       ORDER BY l.id DESC`,
-    [client.id]
+    [client.tenant_id, texto]
   );
 
   if (!rows.length) {
     return send(
-      "Ainda não tem nenhuma licença registada neste número. 🔎\n\n" +
-        'Para contratar, escreva "2" e escolha o produto.\n' +
-        'Escreva "menu" para voltar.'
+      `Não encontrei nenhuma licença associada à conta "${texto}". 🔎\n\n` +
+      'Tente novamente com outro email/ID ou escreva "0" para cancelar.'
     );
   }
 
-  let msg = "💳 As suas licenças:\n\n";
+  let msg = `💳 Licenças para a conta *${texto}*:\n\n`;
   let pendente = null;
 
   for (const l of rows) {
@@ -478,7 +492,8 @@ export async function showPagamento(client, send) {
   }
 
   if (!pendente) {
-    msg += 'Escreva "menu" para voltar.';
+    msg += 'Não há pagamentos pendentes para esta conta. Escreva "menu" para voltar.';
+    await setSession(client.id, "menu", {});
     return send(msg);
   }
 
