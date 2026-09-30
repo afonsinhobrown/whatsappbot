@@ -59,7 +59,7 @@ export async function createPaySuiteCharge(amountMZN, referenceId, opts = {}) {
   return {
     id: String(charge.id == null ? "" : charge.id),
     status: String(charge.status || "pending"),
-    amount: Number(charge.amount == null ? amountMNZ : charge.amount),
+    amount: Number(charge.amount == null ? amountMZN : charge.amount),
     reference: charge.reference || payload.reference,
     checkoutUrl: charge.checkout_url || undefined,
   };

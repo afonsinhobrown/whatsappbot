@@ -155,6 +155,33 @@ export async function handlePlanoContratar(client, ctx, text, send) {
     nome_plano: plano.nome_plano,
   };
 
+  // Se o cliente já tem uma licença activa deste plano, não faz sentido criar
+  // outra: a renovação acontece pela opção 3 (pagar licença existente), que
+  // verifica a expiração. Sem esta verificação, alguém podia contratar o
+  // mesmo plano vezes seguidas e receber várias páginas de pagamento.
+  const jaAtiva = await query(
+    `SELECT l.id, l.data_expiracao
+       FROM licencas l
+      WHERE l.tenant_id = $1
+        AND l.plano_id = $2
+        AND l.status = 'ativa'
+        AND l.data_expiracao > now()
+      ORDER BY l.data_expiracao DESC LIMIT 1`,
+    [client.tenant_id, planoId]
+  );
+
+  if (jaAtiva.rows.length > 0) {
+    const l = jaAtiva.rows[0];
+    const conta = l.id;
+    return send(
+      `ℹ️ Já tem este plano activo.\n\n` +
+        `*${plano.produto}* — ${plano.nome_plano}\n` +
+        `Licença #${conta}, válida até ${new Date(l.data_expiracao).toISOString().slice(0, 10)}.\n\n` +
+        "Não precisa de comprar outra vez. Para renovar mais tarde, escreva " +
+        '"3" e indique o seu email ou ID de cliente.'
+    );
+  }
+
   const produtoNomeLower = plano.produto.toLowerCase();
 
   if (produtoNomeLower.includes("hefelgym") || produtoNomeLower.includes("gym")) {
@@ -505,7 +532,7 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
 
   // Verificar se a licença pertence à conta inserida
   const { rows } = await query(
-    `SELECT l.id, l.status, pl.preco, pl.nome_plano, pr.nome AS produto
+    `SELECT l.id, l.status, l.data_expiracao, pl.preco, pl.nome_plano, pr.nome AS produto
        FROM licencas l
        LEFT JOIN planos pl ON pl.id = l.plano_id
        LEFT JOIN produtos pr ON pr.id = pl.produto_id
@@ -520,8 +547,8 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
 
   // Verificar se já existe um pagamento pendente para esta licença
   const pag = await query(
-    `SELECT id, valor, paysuite_checkout_url FROM pagamentos 
-      WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND status = 'pendente' 
+    `SELECT id, valor, paysuite_checkout_url FROM pagamentos
+      WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND status = 'pendente'
       ORDER BY id DESC LIMIT 1`,
     [licencaId]
   );
@@ -535,7 +562,60 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
     pagamentoId = pag.rows[0].id;
     valor = pag.rows[0].valor;
   } else {
-    // Criar um NOVO pagamento para renovação
+    // Antes de criar um pagamento, confirmar com a PaySuite que o anterior
+    // (se houve) não foi pago. Sem isto, um cliente que pagou e não recebeu a
+    // confirmação podia pagar outra vez e receber uma segunda cobrança.
+    const anteriores = await query(
+      `SELECT id, paysuite_id, paysuite_checkout_url, status, valor
+         FROM pagamentos
+        WHERE referencia_tipo = 'licenca' AND referencia_id = $1
+        ORDER BY id DESC LIMIT 5`,
+      [licencaId]
+    );
+
+    for (const ant of anteriores.rows) {
+      if (!ant.paysuite_id) continue;
+      let estado = "";
+      try {
+        const s = await getPaySuiteCharge(String(ant.paysuite_id));
+        estado = String(s.status || (s.transaction && s.transaction.status) || "").toLowerCase();
+      } catch (err) {
+        // A PaySuite não respondeu — não arriscamos dizer que está pago.
+        console.error(`[PAYSUITE] não consegui ler o pedido ${ant.paysuite_id}:`, err.message);
+        continue;
+      }
+      if (ESTADOS_PAGOS.has(estado)) {
+        // O dinheiro já entrou mas o webhook não activou a licença.
+        // Confirmamos em vez de cobrar outra vez.
+        const r = await confirmarPagamento(String(ant.paysuite_id));
+        if (r.ok) {
+          return send(
+            `✅ *O seu pagamento já estava confirmado!*\n\n` +
+              `${descricao}\n` +
+              (r.data_expiracao
+                ? `A licença está activa até ${r.data_expiracao.slice(0, 10)}.\n`
+                : "") +
+              "\nNão é necessário pagar novamente."
+          );
+        }
+      }
+    }
+
+    // Licença ainda activa e sem pagamento por resolver: Renewal só faz
+    // sentido para extender. Bloquear aqui evita renovações em cima de
+    // renovações, que é o que permitia pagar a mesma licença N vezes.
+    if (licenca.status === "ativa" && licenca.data_expiracao) {
+      const expira = new Date(licenca.data_expiracao);
+      if (expira > new Date()) {
+        return send(
+          `ℹ️ A licença *#${licencaId}* (${descricao}) já está *activa* até ` +
+            `${expira.toISOString().slice(0, 10)}.\n\n` +
+            "Não é preciso pagar agora. Quando estiver quase a expirar voltamos a avisar.\n\n" +
+            'Escreva "menu" para voltar.'
+        );
+      }
+    }
+
     valor = licenca.preco;
     const novoPag = await query(
       `INSERT INTO pagamentos (tenant_id, cliente_id, referencia_tipo, referencia_id, valor, moeda, status)

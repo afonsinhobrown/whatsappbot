@@ -106,7 +106,10 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     case "pagamento_metodo":
       return handlePagamentoMetodo(client, ctx, text, send);
     case "humano":
-      // Encaminhar a resposta do cliente para o admin em modo relay
+      // Um cliente que pede atendimento humano mas depois escreve "menu"
+      // (ou qualquer comando global) já é tratado acima e sai do estado.
+      // Sem isto, o bot ficava a responder "mensagem enviada ao admin"
+      // para sempre, sem o cliente conseguir voltar ao menu.
       if (adminPhone) {
         await sendTextMessage(adminPhone, `📩 *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
       }

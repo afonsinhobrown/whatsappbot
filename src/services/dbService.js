@@ -245,6 +245,13 @@ export async function updateRow(table, id, data) {
 
 export async function deleteRow(table, id) {
   assertTable(table);
+  // Apagar um tenant deixaria a plataforma sem dono nenhum. É a operação
+  // mais destrutiva que existe, por isso nunca passa pelo painel genérico.
+  if (table === "tenants") {
+    throw Object.assign(new Error("Tenants não podem ser apagados pelo painel"), {
+      status: 400,
+    });
+  }
   const db = requireDb();
   await db.query(`DELETE FROM "${table}" WHERE id = $1`, [id]);
   return true;
