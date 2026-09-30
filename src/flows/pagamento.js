@@ -155,33 +155,6 @@ export async function handlePlanoContratar(client, ctx, text, send) {
     nome_plano: plano.nome_plano,
   };
 
-  // Se o cliente já tem uma licença activa deste plano, não faz sentido criar
-  // outra: a renovação acontece pela opção 3 (pagar licença existente), que
-  // verifica a expiração. Sem esta verificação, alguém podia contratar o
-  // mesmo plano vezes seguidas e receber várias páginas de pagamento.
-  const jaAtiva = await query(
-    `SELECT l.id, l.data_expiracao
-       FROM licencas l
-      WHERE l.tenant_id = $1
-        AND l.plano_id = $2
-        AND l.status = 'ativa'
-        AND l.data_expiracao > now()
-      ORDER BY l.data_expiracao DESC LIMIT 1`,
-    [client.tenant_id, planoId]
-  );
-
-  if (jaAtiva.rows.length > 0) {
-    const l = jaAtiva.rows[0];
-    const conta = l.id;
-    return send(
-      `ℹ️ Já tem este plano activo.\n\n` +
-        `*${plano.produto}* — ${plano.nome_plano}\n` +
-        `Licença #${conta}, válida até ${new Date(l.data_expiracao).toISOString().slice(0, 10)}.\n\n` +
-        "Não precisa de comprar outra vez. Para renovar mais tarde, escreva " +
-        '"3" e indique o seu email ou ID de cliente.'
-    );
-  }
-
   const produtoNomeLower = plano.produto.toLowerCase();
 
   if (produtoNomeLower.includes("hefelgym") || produtoNomeLower.includes("gym")) {
@@ -465,9 +438,9 @@ async function clienteWhatsapp(clienteId) {
 export async function showPagamento(client, send) {
   await setSession(client.id, "pagamento_buscar_conta", {});
   return send(
-    "Para qual conta deseja pagar a licença?\n\n" +
-    "Por favor, digite o *email* ou o *ID de cliente* associado à licença:\n\n" +
-    '(escreva "0" para voltar)'
+    "💳 Vamos ver as suas licenças.\n\n" +
+      "Escreva o *email*, o *ID de cliente* ou o número de licença que usa no sistema.\n\n" +
+      'Escreva "0" para voltar.'
   );
 }
 
@@ -479,15 +452,21 @@ export async function handlePagamentoBuscarConta(client, ctx, text, send) {
   }
 
   const { rows } = await query(
-    `SELECT l.id, l.status,
+    `SELECT l.id, l.status, l.data_expiracao,
             pl.nome_plano, pl.preco, pr.nome AS produto,
-            pg.id AS pagamento_id, pg.metodo, pg.status AS pagamento_status,
-            pg.valor, pg.paysuite_checkout_url
+            pg.id AS pagamento_id, pg.status AS pagamento_status,
+            pg.valor
        FROM licencas l
        LEFT JOIN planos pl ON pl.id = l.plano_id
        LEFT JOIN produtos pr ON pr.id = pl.produto_id
-       LEFT JOIN pagamentos pg ON pg.referencia_tipo = 'licenca' AND pg.referencia_id = l.id
-      WHERE l.tenant_id = $1 AND LOWER(l.dados_conta->>'valor') = LOWER($2)
+       LEFT JOIN LATERAL (
+         SELECT id, status, valor FROM pagamentos
+          WHERE referencia_tipo = 'licenca' AND referencia_id = l.id
+          ORDER BY id DESC LIMIT 1
+       ) pg ON true
+      WHERE l.tenant_id = $1
+        AND ( LOWER(l.dados_conta->>'valor') = LOWER($2)
+              OR l.id::text = $2 )
       ORDER BY l.id DESC`,
     [client.tenant_id, texto]
   );
@@ -499,20 +478,37 @@ export async function handlePagamentoBuscarConta(client, ctx, text, send) {
     );
   }
 
-  let msg = `💳 Licenças para a conta *${texto}*:\n\n`;
+  let msg = `💳 Licenças da conta *${texto}*:\n\n`;
   const licencasIds = [];
 
   for (const l of rows) {
-    msg += `#${l.id} — ${l.produto || "?"} (${l.nome_plano || "?"}) · ${l.status}\n`;
-    if (l.pagamento_id) {
-      msg += `   Pagamento #${l.pagamento_id}: ${l.pagamento_status}\n`;
+    const valor = Number(l.preco) > 0 ? formatMoney(l.preco) : "sob consulta";
+
+    msg += `*${l.id}.* ${l.produto || "?"} — ${l.nome_plano || "?"}\n`;
+    msg += `    Preço: ${valor}\n`;
+
+    if (l.status === "ativa" && l.data_expiracao) {
+      msg += `    Estado: activa até ${new Date(l.data_expiracao).toISOString().slice(0, 10)}\n`;
+    } else if (l.data_expiracao) {
+      msg += `    Estado: ${l.status} (expirou a ${new Date(l.data_expiracao).toISOString().slice(0, 10)})\n`;
+    } else {
+      msg += `    Estado: ${l.status}\n`;
     }
+
+    if (l.pagamento_id && l.pagamento_status === "pendente") {
+      msg += `    Pagamento #${l.pagamento_id}: por pagar\n`;
+    } else if (l.pagamento_id) {
+      msg += `    Pagamento #${l.pagamento_id}: ${l.pagamento_status}\n`;
+    }
+
     msg += "\n";
     if (!licencasIds.includes(l.id)) licencasIds.push(l.id);
   }
 
-  msg += 'Qual licença deseja pagar ou renovar? Digite apenas o número (ex: ' + licencasIds[0] + ').\n\n' +
-         '(escreva "0" para voltar)';
+  msg +=
+    "Escolha o número da licença que quer pagar ou renovar:\n" +
+    `(${licencasIds.join(", ")})\n\n` +
+    'Escreva "0" para voltar.';
 
   await setSession(client.id, "pagamento_escolher_licenca", { emailOuId: texto });
   return send(msg);
@@ -536,7 +532,9 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
        FROM licencas l
        LEFT JOIN planos pl ON pl.id = l.plano_id
        LEFT JOIN produtos pr ON pr.id = pl.produto_id
-      WHERE l.tenant_id = $1 AND l.id = $2 AND LOWER(l.dados_conta->>'valor') = LOWER($3)`,
+      WHERE l.tenant_id = $1 AND l.id = $2
+        AND ( LOWER(l.dados_conta->>'valor') = LOWER($3)
+              OR l.id::text = $3 )`,
     [client.tenant_id, licencaId, ctx.emailOuId]
   );
 
@@ -545,77 +543,103 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
     return send('Licença não encontrada para esta conta. Tente outro número ou "0" para cancelar.');
   }
 
-  // Verificar se já existe um pagamento pendente para esta licença
+  const descricao = `${licenca.produto} — ${licenca.nome_plano}`;
+
+  // Antes de propor uma cobrança, perguntamos à PaySuite se algum pedido
+  // anterior desta licença já foi pago. Sem isto, um cliente que pagou mas
+  // não recebeu a confirmação podia ser cobrado uma segunda vez.
+  const pago = await confirmarSeJaPago(licencaId);
+  if (pago && pago.ok) {
+    return send(
+      `✅ *O seu pagamento já estava confirmado!*\n\n` +
+        `${descricao}\n` +
+        (pago.data_expiracao
+          ? `A licença está activa até ${pago.data_expiracao.slice(0, 10)}.\n`
+          : "") +
+        "\nNão é necessário pagar novamente."
+    );
+  }
+
+  // Licença ainda activa: avisamos e deixamos a decisão ao cliente. Não
+  // bloqueamos — renovar antecipadamente é legítimo.
+  if (licenca.status === "ativa" && licenca.data_expiracao) {
+    const expira = new Date(licenca.data_expiracao);
+    if (expira > new Date()) {
+      console.log(
+        `[ADMIN] #${licencaId} ainda activa até ${expira.toISOString().slice(0, 10)} — a perguntar ao cliente`
+      );
+      await setSession(client.id, "pagamento_confirmar_renovacao", {
+        licencaId,
+        emailOuId: ctx.emailOuId,
+        ate: expira.toISOString(),
+      });
+      return send(
+        `ℹ️ Esta licença já está *activa* até ${expira.toISOString().slice(0, 10)}.\n\n` +
+          `*${descricao}* — ${formatMoney(licenca.preco)}\n\n` +
+          'Quer renovar mesmo assim? Responda "sim" para continuar, ou "0" para voltar.'
+      );
+    }
+  }
+
+  return criarPagamentoParaLicenca(client, licenca, descricao, send);
+}
+
+/**
+ * Confirma com a PaySuite se algum pedido anterior desta licença já foi
+ * pago. Devolve o resultado de confirmarPagamento() ou null se não houver
+ * pedido pago.
+ */
+async function confirmarSeJaPago(licencaId) {
+  const anteriores = await query(
+    `SELECT paysuite_id FROM pagamentos
+      WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND paysuite_id IS NOT NULL
+      ORDER BY id DESC LIMIT 5`,
+    [licencaId]
+  );
+
+  for (const ant of anteriores.rows) {
+    let estado = "";
+    try {
+      const s = await getPaySuiteCharge(String(ant.paysuite_id));
+      estado = String(s.status || (s.transaction && s.transaction.status) || "").toLowerCase();
+    } catch (err) {
+      // A PaySuite não respondeu — não arriscamos dizer que está pago.
+      console.error(`[PAYSUITE] não consegui ler o pedido ${ant.paysuite_id}:`, err.message);
+      continue;
+    }
+    if (ESTADOS_PAGOS.has(estado)) {
+      // O dinheiro já entrou mas o webhook não activou a licença.
+      // Confirmamos em vez de cobrar outra vez.
+      const r = await confirmarPagamento(String(ant.paysuite_id));
+      if (r.ok) return r;
+    }
+  }
+  return null;
+}
+
+/**
+ * Cria (ou reutiliza) o pagamento de uma licença e envia a página de
+ * checkout. O valor vem sempre do plano — nunca de um valor enviado pelo
+ * cliente.
+ */
+async function criarPagamentoParaLicenca(client, licenca, descricao, send) {
+  const licencaId = licenca.id;
+
+  // Se já existe um pagamento pendente, reutiliza-se em vez de duplicar.
   const pag = await query(
-    `SELECT id, valor, paysuite_checkout_url FROM pagamentos
+    `SELECT id, valor FROM pagamentos
       WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND status = 'pendente'
       ORDER BY id DESC LIMIT 1`,
     [licencaId]
   );
 
-  const descricao = `${licenca.produto} — ${licenca.nome_plano}`;
   let pagamentoId;
   let valor;
 
   if (pag.rows.length > 0) {
-    // Reutilizar o pagamento pendente existente
     pagamentoId = pag.rows[0].id;
     valor = pag.rows[0].valor;
   } else {
-    // Antes de criar um pagamento, confirmar com a PaySuite que o anterior
-    // (se houve) não foi pago. Sem isto, um cliente que pagou e não recebeu a
-    // confirmação podia pagar outra vez e receber uma segunda cobrança.
-    const anteriores = await query(
-      `SELECT id, paysuite_id, paysuite_checkout_url, status, valor
-         FROM pagamentos
-        WHERE referencia_tipo = 'licenca' AND referencia_id = $1
-        ORDER BY id DESC LIMIT 5`,
-      [licencaId]
-    );
-
-    for (const ant of anteriores.rows) {
-      if (!ant.paysuite_id) continue;
-      let estado = "";
-      try {
-        const s = await getPaySuiteCharge(String(ant.paysuite_id));
-        estado = String(s.status || (s.transaction && s.transaction.status) || "").toLowerCase();
-      } catch (err) {
-        // A PaySuite não respondeu — não arriscamos dizer que está pago.
-        console.error(`[PAYSUITE] não consegui ler o pedido ${ant.paysuite_id}:`, err.message);
-        continue;
-      }
-      if (ESTADOS_PAGOS.has(estado)) {
-        // O dinheiro já entrou mas o webhook não activou a licença.
-        // Confirmamos em vez de cobrar outra vez.
-        const r = await confirmarPagamento(String(ant.paysuite_id));
-        if (r.ok) {
-          return send(
-            `✅ *O seu pagamento já estava confirmado!*\n\n` +
-              `${descricao}\n` +
-              (r.data_expiracao
-                ? `A licença está activa até ${r.data_expiracao.slice(0, 10)}.\n`
-                : "") +
-              "\nNão é necessário pagar novamente."
-          );
-        }
-      }
-    }
-
-    // Licença ainda activa e sem pagamento por resolver: Renewal só faz
-    // sentido para extender. Bloquear aqui evita renovações em cima de
-    // renovações, que é o que permitia pagar a mesma licença N vezes.
-    if (licenca.status === "ativa" && licenca.data_expiracao) {
-      const expira = new Date(licenca.data_expiracao);
-      if (expira > new Date()) {
-        return send(
-          `ℹ️ A licença *#${licencaId}* (${descricao}) já está *activa* até ` +
-            `${expira.toISOString().slice(0, 10)}.\n\n` +
-            "Não é preciso pagar agora. Quando estiver quase a expirar voltamos a avisar.\n\n" +
-            'Escreva "menu" para voltar.'
-        );
-      }
-    }
-
     valor = licenca.preco;
     const novoPag = await query(
       `INSERT INTO pagamentos (tenant_id, cliente_id, referencia_tipo, referencia_id, valor, moeda, status)
@@ -623,7 +647,7 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
       [client.tenant_id, client.id, licencaId, valor]
     );
     pagamentoId = novoPag.rows[0].id;
-    console.log(`[ADMIN] Novo pagamento para renovação #${pagamentoId} da licença #${licencaId}`);
+    console.log(`[ADMIN] Novo pagamento #${pagamentoId} para a licença #${licencaId}`);
   }
 
   await setSession(client.id, "pagamento_metodo", {
@@ -634,4 +658,44 @@ export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
   });
 
   return abrirPaginaPagamento(client, pagamentoId, valor, descricao, send);
+}
+
+/**
+ * O cliente respondeu "sim" à pergunta de renovação antecipada.
+ */
+export async function handlePagamentoConfirmarRenovacao(client, ctx, text, send) {
+  const resposta = text.trim().toLowerCase();
+
+  if (resposta === "0" || COMANDOS_MENU.includes(resposta)) {
+    await setSession(client.id, "menu", {});
+    return send("Operação cancelada. Voltamos ao menu principal.");
+  }
+
+  if (!["sim", "s", "yes", "y", "ok"].includes(resposta)) {
+    return send('Responda "sim" para renovar ou "0" para voltar.');
+  }
+
+  const { rows } = await query(
+    `SELECT l.id, l.status, l.data_expiracao, pl.preco, pl.nome_plano, pr.nome AS produto
+       FROM licencas l
+       LEFT JOIN planos pl ON pl.id = l.plano_id
+       LEFT JOIN produtos pr ON pr.id = pl.produto_id
+      WHERE l.tenant_id = $1 AND l.id = $2
+        AND ( LOWER(l.dados_conta->>'valor') = LOWER($3)
+              OR l.id::text = $3 )`,
+    [client.tenant_id, ctx.licencaId, ctx.emailOuId]
+  );
+
+  const licenca = rows[0];
+  if (!licenca) {
+    await setSession(client.id, "menu", {});
+    return send('Licença não encontrada. Escreva "menu" para voltar.');
+  }
+
+  return criarPagamentoParaLicenca(
+    client,
+    licenca,
+    `${licenca.produto} — ${licenca.nome_plano}`,
+    send
+  );
 }
