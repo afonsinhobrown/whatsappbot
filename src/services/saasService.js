@@ -237,7 +237,8 @@ export function getSistemaChave(produtoNome) {
     p.includes("smartwms") ||
     p.includes("wms") ||
     p.includes("armazem") ||
-    p.includes("moz tele")
+    p.includes("moz tele") ||
+    p.includes("armazem")
   ) {
     return "ARMAZEM";
   }
@@ -480,3 +481,122 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
     duracaoDias: lic.duration_days ?? null,
   };
 }
+
+/* =========================================================================
+ * PLANOS REAIS DE CADA SISTEMA
+ *
+ * O catálogo do bot (tabela `planos`) é um modelo genérico — o mesmo
+ * Basic/Premium/Enterprise colado a todos os sistemas — e os preços não
+ * batem com nada do que está nas bases de dados dos clientes. Cobrar do
+ * catálogo era cobrar um número inventado.
+ *
+ * Cada sistema tem a sua tabela de planos, com o preço e o slug verdadeiros.
+ * É daí que passam a vir os planos, o preço e o plano que é gravado na conta
+ * depois do pagamento.
+ * ========================================================================= */
+
+/** Queries que devolvem os planos que o sistema realmente vende. */
+const CONSULTA_PLANOS = {
+  ARMAZEM: async () => {
+    const { rows } = await consultar(
+      "ARMAZEM",
+      "SELECT slug, name AS nome, monthly_price AS preco, duration_days, description, is_public " +
+        "FROM plans WHERE is_active = true ORDER BY monthly_price"
+    );
+    return rows;
+  },
+  XONGUILE: async () => {
+    const { rows } = await consultar(
+      "XONGUILE",
+      'SELECT code AS slug, name AS nome, price AS preco, period, features FROM "SaasPlans" ' +
+        'WHERE "is_active" = true ORDER BY price'
+    );
+    return rows.map((r) => ({ ...r, duracaoDias: 30 }));
+  },
+  // No Gymar o preço ao cliente final leva 16% de IVA.
+  GYMAR: async () => {
+    const { rows } = await consultar(
+      "GYMAR",
+      "SELECT id AS slug, name AS nome, (price::numeric * 1.16)::float AS preco, duration, features " +
+        "FROM plans ORDER BY price::numeric"
+    );
+    return rows.map((r) => ({ ...r, duracaoDias: r.duration || 30 }));
+  },
+  CAFEPOINT: async () => {
+    const { rows } = await consultar(
+      "CAFEPOINT",
+      'SELECT id::text AS slug, name AS nome, "monthlyPrice" AS preco, duration AS duracaoDias FROM "Plan" ' +
+        'WHERE "isActive" = true ORDER BY "monthlyPrice"'
+    );
+    return rows;
+  },
+  GESTORFARMA: async () => {
+    const { rows } = await consultar(
+      "GESTORFARMA",
+      "SELECT id::text AS slug, nome, preco_mensal::float AS preco, recursos FROM farmacias_planofarmacia " +
+        "WHERE is_ativo = true ORDER BY preco_mensal"
+    );
+    return rows.map((r) => ({ ...r, duracaoDias: 30, descricao: Array.isArray(r.recursos) ? r.recursos.join(", ") : null }));
+  },
+  // O Shoplink não tem tabela de planos: o preço vive na própria licença.
+  SHOPLINK: async () => {
+    const { rows } = await consultar(
+      "SHOPLINK",
+      "SELECT DISTINCT plano AS slug, plano AS nome, valor_mensal::float AS preco " +
+        "FROM licenca WHERE plano IS NOT NULL ORDER BY preco"
+    );
+    return rows.map((r) => ({ ...r, duracaoDias: 30 }));
+  },
+};
+
+/**
+ * Planos que o sistema do cliente vende agora, lidos da base de dados dele.
+ *
+ * Devolve `{ ok:false, semConector:true }` quando não há base de dados
+ * configurada — nesses casos o bot ainda tem de usar o catálogo.
+ */
+export async function listarPlanosSaaS(produtoNome) {
+  const sistema = getSistemaChave(produtoNome);
+  const consulta = CONSULTA_PLANOS[sistema];
+  if (!consulta) return { ok: false, semConector: true, sistema };
+
+  try {
+    const planos = (await consulta()) || [];
+    return {
+      ok: true,
+      sistema,
+      planos: planos
+        .map((p) => ({
+          slug: p.slug,
+          nome: p.nome,
+          preco: p.preco === null || p.preco === undefined ? null : Number(p.preco),
+          duracaoDias: p.duracaoDias ?? null,
+          descricao: p.descricao || null,
+          publico: p.is_public !== false,
+        }))
+        // Planos a 0 (trial) não se vendem: o cliente pagaria nada e
+        // ficaria sem o que a activação é para.
+        .filter((p) => p.slug && p.nome && Number(p.preco) > 0)
+        // O Gymar tem o mesmo plano em duplicado (código antigo e o actual).
+        // Mostrar as duas linhas ao cliente era confuso; fica a mais barata.
+        .filter(
+          (p, i, lista) => lista.findIndex((o) => o.nome === p.nome && Number(o.preco) === Number(p.preco)) === i
+        ),
+    };
+  } catch (err) {
+    console.error(`[SAAS] leitura de planos em ${sistema} falhou:`, err.message);
+    return { ok: false, sistema, erro: err.message };
+  }
+}
+
+/** Preço de um plano pelo slug, lido do sistema do cliente. */
+export async function precoPlanoSaaS(produtoNome, slug) {
+  const { ok, planos } = await listarPlanosSaaS(produtoNome);
+  if (!ok) return null;
+  const p = planos.find((x) => x.slug === slug);
+  return p ? p.preco : null;
+}
+
+export const getPlanosSaaS = listarPlanosSaaS;
+export const getPrecoPlanoSaaS = precoPlanoSaaS;
+export const planosReaisDoSistema = listarPlanosSaaS;

@@ -3,6 +3,7 @@ import { setSession } from "../services/sessionService.js";
 import {
   ativarLicenca,
   consultarLicencaSaaS,
+  listarPlanosSaaS,
   getSistemaChave,
   SISTEMA_LABEL,
   temConector,
@@ -37,12 +38,18 @@ function baseUrl() {
  * o bot não pergunta o método.
  */
 async function criarLicencaEAbrirPagina(client, ctx, send) {
-  const { planoId, preco, produto, nome_plano, saasUser, hefelgymId } = ctx;
+  const { planoId, preco, produto, nome_plano, saasUser, hefelgymId, saasPlano } = ctx;
   const valor = Number(ctx.valor ?? preco);
 
   const conta = hefelgymId
     ? { tipo: "id_ginasio", valor: hefelgymId }
     : { tipo: "email", valor: saasUser };
+  // O slug e o nome do produto travelham com a licença: um plano lido da
+  // base de dados do cliente não existe na tabela `planos` do bot, e sem isto
+  // a confirmação do pagamento não saberia que sistema activar.
+  if (saasPlano) conta.saasPlano = saasPlano;
+  conta.nome_plano = nome_plano;
+  conta.produtoCatalogo = produto;
 
   const descricao = `${produto} — ${nome_plano}`;
 
@@ -57,12 +64,15 @@ async function criarLicencaEAbrirPagina(client, ctx, send) {
        JOIN pagamentos p
          ON p.referencia_tipo = 'licenca' AND p.referencia_id = l.id
       WHERE l.tenant_id = $1
-        AND l.plano_id = $2
         AND l.status = 'pendente'
-        AND LOWER(l.dados_conta->>'valor') = LOWER($3)
+        AND LOWER(l.dados_conta->>'valor') = LOWER($2)
+        AND (
+          ($3::int IS NOT NULL AND l.plano_id = $3)
+          OR ($3::int IS NULL AND l.dados_conta->>'saasPlano' = $4)
+        )
       ORDER BY p.id DESC
       LIMIT 1`,
-    [client.tenant_id, planoId, conta.valor]
+    [client.tenant_id, conta.valor, planoId ?? null, saasPlano || null]
   );
 
   if (existente.rows.length > 0) {
@@ -320,10 +330,10 @@ export async function handlePagamentoMetodo(client, ctx, text, send) {
  * a verdade vem sempre da PaySuite, nunca do pedido do cliente.
  */
 export async function confirmarPagamento(paysuiteId, opcoes = {}) {
-  const pag = await query(
-`SELECT p.id, p.tenant_id, p.cliente_id, p.referencia_id, p.valor, p.status,
-             l.plano_id, l.status AS licenca_status, l.data_expiracao,
-             pl.nome_plano, pr.nome AS produto
+const pag = await query(
+    `SELECT p.id, p.tenant_id, p.cliente_id, p.referencia_id, p.valor, p.status,
+            l.plano_id, l.status AS licenca_status, l.data_expiracao, l.dados_conta,
+            pl.nome_plano, pr.nome AS produto
        FROM pagamentos p
        JOIN licencas l ON l.id = p.referencia_id AND p.referencia_tipo = 'licenca'
        LEFT JOIN planos pl ON pl.id = l.plano_id
@@ -335,6 +345,14 @@ export async function confirmarPagamento(paysuiteId, opcoes = {}) {
   const pagamento = pag.rows[0];
   if (!pagamento) return { ok: false, motivo: "pagamento não encontrado" };
   if (pagamento.status === "confirmado") return { ok: true, jaConfirmado: true };
+
+  // Quando o plano veio da base de dados do sistema do cliente não existe
+  // linha na tabela `planos` do bot, por isso produto e plano são lidos de
+  // dados_conta. Sem isto a renovação no sistema do cliente não sabia nem
+  // qual sistema nem qual conta activar.
+  const dadosLic = pagamento.dados_conta || {};
+  const produtoPagamento = pagamento.produto || dadosLic.produtoCatalogo || null;
+  const planoPagamento = pagamento.nome_plano || dadosLic.nome_plano || null;
 
   // 1) A PaySuite é a fonte da verdade. Sem isto, qualquer bug daria uma
   //    licença de graça e activaria contas reais de clientes.
@@ -388,8 +406,13 @@ export async function confirmarPagamento(paysuiteId, opcoes = {}) {
   try {
     const conta = await query("SELECT dados_conta FROM licencas WHERE id = $1", [pagamento.referencia_id]);
     const dados = conta.rows[0] && conta.rows[0].dados_conta;
-    if (dados && dados.valor && pagamento.produto) {
-      noSaas = await ativarLicenca(pagamento.produto, dados.valor, 1, slugDoPlano(pagamento.produto, pagamento.plano_nome));
+    if (dados && dados.valor && (produtoPagamento || pagamento.produto)) {
+      const prod = produtoPagamento || pagamento.produto;
+      const planoNom = planoPagamento || pagamento.nome_plano;
+      // O slug lido da base do cliente tem prioridade sobre o mapa local:
+      // é o plano que ele escolheu e que existe lá dentro.
+      const slugReal = dados.saasPlano || slugDoPlano(prod, planoNom);
+      noSaas = await ativarLicenca(prod, dados.valor, 1, slugReal);
     }
   } catch (err) {
     console.error("[SAAS] erro ao activar a licença:", err.message);
@@ -404,8 +427,8 @@ export async function confirmarPagamento(paysuiteId, opcoes = {}) {
     ok: true,
     cliente_id: pagamento.cliente_id,
     whatsapp: await clienteWhatsapp(pagamento.cliente_id),
-    produto: pagamento.produto,
-    plano: pagamento.nome_plano,
+    produto: pagamento.produto || produtoPagamento,
+    plano: pagamento.nome_plano || planoPagamento,
     valor: pagamento.valor,
     data_expiracao: dataExpiracao.toISOString(),
     sausActivado: noSaas,
@@ -653,7 +676,7 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
 
   // Incluídos os planos ocultos: é assim que o "moz teles" reservado é
   // encontrado quando é o plano que a conta já tem.
-  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId, { incluirOcultos: true });
+  const { origem: origemPlanos, planos } = await planosDisponiveis(client, ctx, { incluirOcultos: true });
   const planoCliente = lic.ok
     ? planoQueCorresponde(planos, lic.planoSlug, lic.plano, lic.precoSugerido)
     : null;
@@ -663,7 +686,6 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
   if (planoCliente) {
     opcoes.push({
       accao: "pagar",
-      planoId: planoCliente.id,
       rotulo: `*Renovar* ${planoCliente.nome_plano} — ${formatMoney(planoCliente.preco)}/mês`,
     });
     cabecalho += `💰 Renovação: ${formatMoney(planoCliente.preco)}/mês.\n\n`;
@@ -675,7 +697,8 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
 
   await setSession(client.id, "pagamento_escolher_opcao", {
     ...ctx,
-    planoClienteId: planoCliente ? planoCliente.id : null,
+    origemPlanos,
+    planoCliente: planoCliente || null,
     opcoes: opcoes.map((o) => o.accao),
   });
 
@@ -692,21 +715,36 @@ function planoQueCorresponde(planos, planoSlug, planoNome, precoReal = null) {
   const alvo = String(planoSlug || planoNome || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   if (!alvo) return null;
 
-  const achado =
-    planos.find((p) => {
-      const n = p.nome_plano.toLowerCase().replace(/[^a-z0-9]/g, "");
-      return n === alvo || n.startsWith(alvo) || alvo.startsWith(n);
-    }) || null;
+  const chave = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  // Match por nome mas com preço muito diferente significa que não é o mesmo
-  // plano: no Xonguile, "Premium Especial" (2223) começava por "Premium" e
-  // o bot_propunha renove-lo a 6300. Cobrar o valor errado em silêncio é pior
-  // do que não renomear: aqui devolvemos null e o cliente vê a diferença.
-  if (achado && precoReal && Number.isFinite(Number(precoReal))) {
-    const dif = Math.abs(Number(achado.preco) - Number(precoReal)) / Number(precoReal);
+  // A correspondência é por ordem de confiança. A ordem importa: no Xonguile
+  // "Premium" (6112) e "Premium Especial" (2223) partilham o início do nome.
+  // Com um único `find` ganhava o nome mais comprado, o plano não batia com
+  // o preço da conta e a renovação acabava bloqueada sem explicação.
+  const porSlug = planos.find((p) => p.slug && chave(p.slug) === alvo);
+  if (porSlug) return porSlug;
+
+  const porNomeExacto = planos.find((p) => chave(p.nome_plano || p.nome) === alvo);
+  if (porNomeExacto) return porNomeExacto;
+
+  // Prefixos: o nome mais curto que ainda serve é o melhor candidato
+  // ("Premium" para "Premium", não "Premium Especial").
+  const porPrefixo = planos
+    .filter((p) => {
+      const n = chave(p.nome_plano || p.nome);
+      return n.startsWith(alvo) || alvo.startsWith(n);
+    })
+    .sort((a, b) => chave(a.nome_plano || a.nome).length - chave(b.nome_plano || b.nome).length)[0];
+  if (!porPrefixo) return null;
+
+  // Plano parecido mas com preço muito diferente é outro plano. Cobrar o valor
+  // errado em silêncio é pior do que não propor a renovação: devolvemos null
+  // e o cliente vê a diferença antes de escolher.
+  if (precoReal && Number.isFinite(Number(precoReal))) {
+    const dif = Math.abs(Number(porPrefixo.preco) - Number(precoReal)) / Number(precoReal);
     if (dif > 0.05) return null;
   }
-  return achado;
+  return porPrefixo;
 }
 
 export async function handlePagamentoEscolherOpcao(client, ctx, text, send) {
@@ -727,9 +765,9 @@ export async function handlePagamentoEscolherOpcao(client, ctx, text, send) {
   }
   if (accao === "planos") return mostrarPlanos(client, ctx, send);
 
-  // Incluídos os planos ocultos para conseguir resolver o que está seleccionado.
-  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId, { incluirOcultos: true });
-  const plano = planos.find((p) => p.id === ctx.planoClienteId);
+  // O plano que a conta já tem foi resolvido a partir dos planos reais do
+  // sistema, por isso pode não ter id do catálogo — é só servir a sessão.
+  const plano = ctx.planoCliente;
   if (!plano) return mostrarPlanos(client, ctx, send);
 
   return abrirPagamentoParaPlano(client, ctx, plano, send);
@@ -750,14 +788,51 @@ async function planoExisteNoCliente(produto, nomePlano) {
   return Boolean(slugDoPlano(produto, nomePlano));
 }
 
+/**
+ * Planos que o cliente pode escolher agora.
+ *
+ * Primeiro lemos da base de dados do sistema escolhido — aí estão os planos
+ * e os preços verdadeiros. Só quando o sistema não tem base configurada é que
+ * se usa o catálogo do bot, que é genérico.
+ */
+async function planosDisponiveis(client, ctx, { incluirOcultos = false } = {}) {
+  let reais = null;
+  try {
+    reais = await listarPlanosSaaS(ctx.produto);
+  } catch (err) {
+    console.warn("[PAGAMENTO] não conseguiu ler planos reais:", err.message);
+  }
+
+  if (reais && reais.ok && reais.planos.length) {
+    return {
+      origem: "saas",
+      sistema: reais.sistema,
+      planos: reais.planos
+        .filter((p) => incluirOcultos || p.publico)
+        .map((p) => ({ id: null, slug: p.slug, nome_plano: p.nome, preco: p.preco })),
+    };
+  }
+
+  return {
+    origem: "catalogo",
+    planos: (await planosDoProduto(client.tenant_id, ctx.produtoId, { incluirOcultos })).map((p) => ({
+      id: p.id,
+      slug: null,
+      nome_plano: p.nome_plano,
+      preco: p.preco,
+    })),
+  };
+}
+
 async function mostrarPlanos(client, ctx, send, prefixo = "") {
-  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId);
+  const { origem, planos } = await planosDisponiveis(client, ctx);
   if (!planos.length) return send("Não há planos disponíveis para este sistema.");
 
   await setSession(client.id, "pagamento_escolher_plano", {
     produtoId: ctx.produtoId,
     produto: ctx.produto,
     conta: ctx.conta,
+    origemPlanos: origem,
   });
 
   return send(
@@ -777,7 +852,7 @@ export async function handlePagamentoEscolherPlano(client, ctx, text, send) {
     return send("Operação cancelada. Voltamos ao menu principal.");
   }
 
-  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId);
+  const { planos } = await planosDisponiveis(client, ctx);
   const plano = planos[parseInt(texto, 10) - 1];
   if (!plano) return send('Escolha um número válido da lista, ou "0" para voltar.');
 
@@ -785,30 +860,35 @@ export async function handlePagamentoEscolherPlano(client, ctx, text, send) {
 }
 
 async function abrirPagamentoParaPlano(client, ctx, plano, send) {
-  if (!(await planoExisteNoCliente(ctx.produto, plano.nome_plano))) {
-    console.error(
-      `[PAGAMENTO] plano "${plano.nome_plano}" de "${ctx.produto}" não existe no sistema do cliente — venda bloqueada`
-    );
-    await avisarAdmin(
-      `🚫 *Venda bloqueada*\n\n` +
-        `O plano *${plano.nome_plano}* do catálogo não existe no sistema ` +
-        `*${rotuloSistema(ctx.produto)}*.\n\n` +
-        `Cliente: ${client.whatsapp_number}\n` +
-        `Alinhe o catálogo com os planos reais antes de o vender.`,
-      client.tenant_id
-    );
-    return falarComHumano(client, send, await getTenantById(client.tenant_id));
+  // Um plano lido da base de dados do cliente é, por definição, um plano que
+  // existe lá dentro: não há o que validar contra o catálogo.
+  if (plano.id !== null && plano.id !== undefined) {
+    if (!(await planoExisteNoCliente(ctx.produto, plano.nome_plano))) {
+      console.error(
+        `[PAGAMENTO] plano "${plano.nome_plano}" de "${ctx.produto}" não existe no sistema do cliente — venda bloqueada`
+      );
+      await avisarAdmin(
+        `🚫 *Venda bloqueada*\n\n` +
+          `O plano *${plano.nome_plano}* do catálogo não existe no sistema ` +
+          `*${rotuloSistema(ctx.produto)}*.\n\n` +
+          `Cliente: ${client.whatsapp_number}\n` +
+          `Alinhe o catálogo com os planos reais antes de o vender.`,
+        client.tenant_id
+      );
+      return falarComHumano(client, send, await getTenantById(client.tenant_id));
+    }
   }
 
   return criarLicencaEAbrirPagina(
     client,
     {
-      planoId: plano.id,
+      planoId: plano.id ?? null,
       preco: plano.preco,
       valor: plano.preco,
       produto: rotuloSistema(ctx.produto),
       nome_plano: plano.nome_plano,
       saasUser: ctx.conta,
+      saasPlano: plano.slug,
     },
     send
   );
