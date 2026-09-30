@@ -127,8 +127,12 @@ export async function validarContaSaaS(produtoNome, username, password) {
  * `slugPlano` é o slug do plano no sistema do cliente. Sem ele a renovação
  * mantém o plano actual — o que serve para renovar, mas não para mudar de
  * plano depois de o cliente escolher outro no bot.
+ *
+ * `valorPago` é o que o cliente pagou. Só o GestorFarma o usa: as licenças
+ * dessa casa não guardam o plano, e sem registar plano nem valor a renovação
+ * seguinte volta a não saber o que a farmácia tem contratado.
  */
-export async function ativarLicenca(produtoNome, username, meses = 1, slugPlano = null) {
+export async function ativarLicenca(produtoNome, username, meses = 1, slugPlano = null, valorPago = null) {
   const sistema = getSistemaChave(produtoNome);
   
   try {
@@ -155,13 +159,26 @@ export async function ativarLicenca(produtoNome, username, meses = 1, slugPlano 
         break;
 
       case "GESTORFARMA":
-        userRes = await queryDual("GESTORFARMA", 'SELECT id FROM farmacias_farmacia WHERE email = $1', [username]);
+        userRes = await queryDual("GESTORFARMA", "SELECT id FROM farmacias_farmacia WHERE email = $1", [username]);
         if (userRes.rows.length > 0) {
           const farmId = userRes.rows[0].id;
-          // Sem o "AND is_ativa = true": pagar tinha de reogar uma licença
-          // expirada. Com esse filtro o UPDATE não afectava nenhuma linha e o
-          // cliente pagava sem receber nada.
-          await queryDual("GESTORFARMA", "UPDATE farmacias_licenca SET is_ativa = true, data_fim = GREATEST(data_fim, CURRENT_TIMESTAMP) + interval '1 month' * $1 WHERE farmacia_id = $2", [meses, farmId]);
+          const res = await queryDual(
+            "GESTORFARMA",
+            "UPDATE farmacias_licenca " +
+              "SET is_ativa = true, paga = true, plano_id = COALESCE($3, plano_id), " +
+              "valor_pago = COALESCE($4, valor_pago), " +
+              "data_fim = GREATEST(data_fim, CURRENT_TIMESTAMP) + interval '1 month' * $1 " +
+              "WHERE id = (SELECT id FROM farmacias_licenca WHERE farmacia_id = $2 " +
+              "ORDER BY data_inicio DESC NULLS LAST LIMIT 1)",
+            [meses, farmId, slugPlano ? Number(slugPlano) || null : null, valorPago]
+          );
+          if (res.rowCount === 0) {
+            console.error(
+              `[SAAS] GestorFarma: a farmácia ${farmId} não tem licença para renovar ` +
+                `(cliente ${username}, plano ${slugPlano}, ${valorPago} MZN)`
+            );
+            return false;
+          }
           return true;
         }
         break;
@@ -373,7 +390,8 @@ const CONSULTA_LICENCA = {
   GESTORFARMA: async (conta) => {
     const { rows } = await consultar(
       "GESTORFARMA",
-      "SELECT l.is_ativa, l.data_inicio, l.data_fim, pl.nome AS plano_nome, pl.preco_mensal AS monthly_price " +
+      "SELECT l.is_ativa, l.data_inicio, l.data_fim, l.valor_pago, l.tipo, " +
+        "pl.nome AS plano_nome, pl.preco_mensal AS monthly_price " +
         "FROM farmacias_licenca l LEFT JOIN farmacias_planofarmacia pl ON pl.id = l.plano_id " +
         "WHERE l.farmacia_id = $1 ORDER BY l.data_inicio DESC NULLS LAST LIMIT 1",
       [conta.id]
@@ -435,11 +453,22 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
   // "Plano Controlo Interno" vem de plans.name; para quem só tem o slug
   // (ex. "interno") mostramos o slug prettificado em vez de nada.
   // Cada sistema nomeou as colunas à sua maneira: "plano" no Shoplink,
-// "plano_nome" ligado à tabela de planos nos restantes.
+  // "plano_nome" ligado à tabela de planos nos restantes.
   const planoBruto = lic.plano_nome || lic.plano || u.plan || null;
-  const plano = planoBruto
+  let plano = planoBruto
     ? planoBruto.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase())
     : null;
+
+  // No GestorFarma as licenças não guardam qual o plano (plano_id fica NULL),
+  // mas o valor pago identifica-o: 2223 é o Pacote Especial NHAMAINGA. Sem
+  // esta leitura o cliente pagador via a lista de planos em vez de lhe
+  // renovarmos o plano que já tem.
+  let planoPorPreco = null;
+  const valorPago = lic.valor_pago === null || lic.valor_pago === undefined ? null : Number(lic.valor_pago);
+  if (!plano && valorPago !== null && valorPago > 0) {
+    planoPorPreco = await planoPeloValorPago(produtoNome, valorPago);
+    if (planoPorPreco) plano = planoPorPreco.nome;
+  }
 
   const validade =
     lic.validUntil || lic.endDate || lic.data_fim || lic.trial_ends_at || u.trial_ends_at || null;
@@ -457,7 +486,7 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
   // de dados. Nos outros sistemas o preço vem do catálogo de planos.
   // O Shoplink devolve "valor_mensal" como texto — Number evita que a
   // comparação com o catálogo (numérica) falhe e o preço caia para o genérico.
-  const precoBruto = u.fee ?? lic.monthly_price ?? null;
+  const precoBruto = u.fee ?? lic.monthly_price ?? planoPorPreco?.preco ?? null;
   const preco = precoBruto === null || precoBruto === undefined ? null : Number(precoBruto);
 
   let dias = null;
@@ -466,6 +495,12 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
     if (!Number.isNaN(d)) dias = d;
   }
 
+  // Licença expirada é expirada, mesmo que a flag is_ativa ainda diga que
+  // está activa. No GestorFarma havia farmácias com is_ativa=true e data_fim
+  // já passada — o bot dizia ao cliente que a licença estava activa. Numa bot
+  // que vende renovações, esse é o erro mais caro que há.
+  const expirada = dias !== null && dias < 0;
+
   return {
     ok: true,
     sistema,
@@ -473,13 +508,29 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
     nome: u.name || u.company_name || identificador,
     identificador,
     plano,
-    planoSlug: u.plan || null,
+    planoSlug: planoPorPreco ? planoPorPreco.slug : u.plan || null,
     validade: validade ? new Date(validade).toISOString() : null,
     dias,
-    estado,
+    estado: expirada ? "expired" : estado,
+    expirada,
     precoSugerido: preco,
     duracaoDias: lic.duration_days ?? null,
   };
+}
+
+/**
+ * Descobre o plano a que um valor pago corresponde.
+ *
+ * Só para sistemas cujas licenças não guardam o plano: o GestorFarma tem
+ * `valor_pago` na licença e a tabela de planos com os preços, por isso o
+ * valor pago é o que diz o que a farmácia contratou. Se nenhum plano tiver
+ * esse preço (o plano mudou de valor desde a compra), devolvemos null e o
+ * cliente vê a lista — adivinhar seria cobrar o valor errado.
+ */
+async function planoPeloValorPago(produtoNome, valor) {
+  const { ok, planos } = await listarPlanosSaaS(produtoNome);
+  if (!ok || !planos.length) return null;
+  return planos.find((p) => Math.abs(Number(p.preco) - valor) < 0.01) || null;
 }
 
 /* =========================================================================

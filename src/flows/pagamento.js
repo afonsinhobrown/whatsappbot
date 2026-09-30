@@ -412,7 +412,9 @@ const pag = await query(
       // O slug lido da base do cliente tem prioridade sobre o mapa local:
       // é o plano que ele escolheu e que existe lá dentro.
       const slugReal = dados.saasPlano || slugDoPlano(prod, planoNom);
-      noSaas = await ativarLicenca(prod, dados.valor, 1, slugReal);
+      // O valor cobrado também viaja: no GestorFarma é o valor pago que diz
+      // qual o plano ficou contratado, porque a licença não guarda o plano.
+      noSaas = await ativarLicenca(prod, dados.valor, 1, slugReal, pagamento.valor);
     }
   } catch (err) {
     console.error("[SAAS] erro ao activar a licença:", err.message);
@@ -681,8 +683,15 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
     const linhas = [`👤 *${lic.nome}*`];
     if (lic.plano) linhas.push(`📦 Plano actual: *${lic.plano}*`);
     linhas.push(`📅 Válido até *${dataCurta(lic.validade)}*${diasTexto(lic.dias)}`);
-    cabecalho =
-      `✅ *Conta encontrada em ${rotuloSistema(ctx.produto)}*\n\n${linhas.join("\n")}\n\n`;
+    if (lic.expirada) {
+      cabecalho =
+        `⚠️ *Licença expirada em ${rotuloSistema(ctx.produto)}*\n\n` +
+        `${linhas.join("\n")}\n\n` +
+        "Pode renovar para continuar a usar o sistema.\n\n";
+    } else {
+      cabecalho =
+        `✅ *Conta encontrada em ${rotuloSistema(ctx.produto)}*\n\n${linhas.join("\n")}\n\n`;
+    }
   }
 
   // Incluídos os planos ocultos: é assim que o "moz teles" reservado é
