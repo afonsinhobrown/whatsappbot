@@ -1,8 +1,15 @@
-import { query } from "../services/dbService.js";
+import { query, getTenantById } from "../services/dbService.js";
 import { setSession } from "../services/sessionService.js";
-import { validarContaSaaS, ativarLicenca } from "../services/saasService.js";
+import {
+  ativarLicenca,
+  consultarLicencaSaaS,
+  getSistemaChave,
+  SISTEMA_LABEL,
+  temConector,
+} from "../services/saasService.js";
 import { createPaySuiteCharge, getPaySuiteCharge } from "../services/paysuiteService.js";
 import { sendTextMessage } from "../services/metaApi.js";
+import { falarComHumano } from "./humano.js";
 import { env } from "../config/env.js";
 
 const METODO_LABEL = { emola: "e-Mola", mpesa: "M-Pesa", visa: "Visa", cartao: "Cartão" };
@@ -166,7 +173,8 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
         `🚨 *PaySuite recusou o pedido*\n\n` +
           `O token da API da PaySuite foi recusado (${err.message}).\n\n` +
           `Nenhum cliente consegue concluir um pagamento até isto ser corrigido. ` +
-          "Actualiza PAYSUITE_API_TOKEN no Vercel."
+          "Actualiza PAYSUITE_API_TOKEN no Vercel.",
+        client.tenant_id
       );
     }
     return send(
@@ -178,19 +186,31 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
 }
 
 /**
- * Avisa o dono de uma falha técnica. Nunca deve interromper o fluxo do
- * cliente, por isso os erros são engolidos.
+ * Envia um aviso ao dono usando o token do tenant.
+ *
+ * O token do ambiente (WHATSAPP_TOKEN) pode estar expirado — o token do
+ * tenant é o que está garantido. Sem isto, os avisos de venda e de falha
+ * não saíam e ninguém vê o problema.
  */
-async function avisarAdmin(texto) {
+async function enviarAoDono(texto, tenantId) {
   const numeros = env.adminNumbers;
   if (!numeros.length) return;
+  const tenant = tenantId ? await getTenantById(tenantId) : null;
   for (const numero of numeros) {
     try {
-      await sendTextMessage(numero, texto);
+      await sendTextMessage(numero, texto, tenant);
     } catch (err) {
       console.error(`[PAYSUITE] não consegui avisar o dono (${numero}):`, err.message);
     }
   }
+}
+
+/**
+ * Avisa o dono de uma falha técnica. Nunca deve interromper o fluxo do
+ * cliente, por isso os erros são engolidos.
+ */
+async function avisarAdmin(texto, tenantId) {
+  await enviarAoDono(texto, tenantId);
 }
 
 function textoLinkPagamento(url, descricao, valor, novo) {
@@ -205,8 +225,12 @@ function textoLinkPagamento(url, descricao, valor, novo) {
 }
 
 /**
- * Escolha do plano (opção 2): em vez de criar logo o pagamento,
- * pergunta pelas credenciais do sistema ou ID do ginásio.
+ * Escolha do plano (opção 2): em vez de criar logo o pagamento, entramos no
+ * mesmo fluxo da opção 3 — o cliente dá os dados, vemos a licença que ele
+ * tem hoje no sistema e ele escolhe o que quer pagar.
+ *
+ * Antes isto perguntava email e depois a senha. A senha não provava nada
+ * (a PaySuite não a valida) e só acrescentava um passo ao cliente.
  */
 export async function handlePlanoContratar(client, ctx, text, send) {
   const planos = ctx.planos || [];
@@ -217,7 +241,7 @@ export async function handlePlanoContratar(client, ctx, text, send) {
   const planoId = planos[n - 1];
 
   const { rows } = await query(
-    `SELECT pl.id, pl.nome_plano, pl.preco, pr.nome AS produto
+    `SELECT pl.id, pl.nome_plano, pl.preco, pl.produto_id, pr.nome AS produto
        FROM planos pl JOIN produtos pr ON pr.id = pl.produto_id
       WHERE pl.id = $1 AND pl.tenant_id = $2`,
     [planoId, client.tenant_id]
@@ -228,107 +252,20 @@ export async function handlePlanoContratar(client, ctx, text, send) {
     return send('Plano não encontrado. Escreva "menu" para voltar.');
   }
 
-  const newCtx = {
-    planoId,
-    preco: plano.preco,
+  await setSession(client.id, "pagamento_dados_conta", {
+    produtoId: plano.produto_id,
     produto: plano.produto,
-    nome_plano: plano.nome_plano,
-  };
+  });
 
-  const produtoNomeLower = plano.produto.toLowerCase();
-
-  if (produtoNomeLower.includes("hefelgym") || produtoNomeLower.includes("gym")) {
-    await setSession(client.id, "pagamento_hefelgym_id", newCtx);
-    return send(
-      `Para pagar a mensalidade do *${plano.produto}*:\n\n` +
-        "Por favor, digite o seu *Nome completo* ou o seu *ID de cliente* do ginásio:"
-    );
-  }
-
-  await setSession(client.id, "pagamento_saas_user", newCtx);
   return send(
-    `Para processar a licença do sistema *${plano.produto}*:\n\n` +
-      "Por favor, digite o *email* com que a sua conta está registada no sistema " +
-      "(é por ele que validamos a conta):"
+    `Escolheu *${rotuloSistema(plano.produto)} — ${plano.nome_plano}* ` +
+      `(${formatMoney(plano.preco)}/mês).\n\n` +
+      "Agora preciso dos *seus dados* para ver a sua licença actual.\n\n" +
+      "Escreva o *email* com que a sua conta está registada no sistema" +
+      (sistemaDe(plano.produto) === "GYMAR" ? ", ou o seu *nome / ID de cliente*" : "") +
+      ":\n\n" +
+      'Escreva "0" para voltar.'
   );
-}
-
-export async function handlePagamentoSaasUser(client, ctx, text, send) {
-  if (text.trim() === "0") {
-    await setSession(client.id, "menu", {});
-    return send("Operação cancelada. Voltamos ao menu principal.");
-  }
-  ctx.saasUser = text.trim();
-  await setSession(client.id, "pagamento_saas_senha", ctx);
-  return send("Agora, por favor, diga a sua senha (só para confirmarmos que é você).");
-}
-
-export async function handlePagamentoSaasSenha(client, ctx, text, send) {
-  if (text.trim() === "0") {
-    await setSession(client.id, "menu", {});
-    return send("Operação cancelada. Voltamos ao menu principal.");
-  }
-  ctx.saasSenha = text.trim();
-
-  if (ctx.produto) {
-    await send(`⏳ A validar a sua conta no sistema ${ctx.produto}...`);
-    const check = await validarContaSaaS(ctx.produto, ctx.saasUser, ctx.saasSenha);
-    if (!check.valid) {
-      if (check.error) {
-        console.error(`[SAAS] validação de ${ctx.produto} falhou:`, check.error);
-      }
-      await setSession(client.id, "pagamento_saas_user", ctx);
-      return send(
-        "❌ *Não encontrámos essa conta.* Verifique o email e tente de novo.\n\n" +
-          'Escreva o email, ou "0" para cancelar.'
-      );
-    }
-    if (check.user && check.user.name) {
-      ctx.contaNome = check.user.name;
-      if (check.user.plan === "moz teles") {
-        ctx.preco = 3000;
-        ctx.valor = 3000;
-        ctx.nome_plano = "moz teles (Pacote Especial)";
-        await send(`✅ Conta confirmada: Olá, ${check.user.name}!\n\nValor ajustado para ${formatMoney(3000)}.`);
-      } else {
-        await send(`✅ Conta confirmada: Olá, ${check.user.name}!`);
-      }
-    } else {
-      await send("✅ Conta registada para licenciamento.");
-    }
-  }
-
-  return criarLicencaEAbrirPagina(client, ctx, send);
-}
-
-export async function handlePagamentoHefelgymId(client, ctx, text, send) {
-  if (text.trim() === "0") {
-    await setSession(client.id, "menu", {});
-    return send("Operação cancelada. Voltamos ao menu principal.");
-  }
-  ctx.hefelgymId = text.trim();
-
-  if (ctx.produto) {
-    await send(`⏳ A procurar o atleta no sistema ${ctx.produto}...`);
-    const check = await validarContaSaaS(ctx.produto, ctx.hefelgymId, "");
-    if (!check.valid) {
-      await setSession(client.id, "pagamento_hefelgym_id", ctx);
-      return send(
-        `❌ *Atleta não encontrado* para "${ctx.hefelgymId}".\n\n` +
-          'Digite novamente o nome ou ID, ou "0" para cancelar.'
-      );
-    }
-    if (check.user && check.user.name) {
-      ctx.contaNome = check.user.name;
-      if (check.user.fee) ctx.valor = Number(check.user.fee);
-      await send(
-        `✅ Atleta confirmado: Olá, ${check.user.name}!\n` +
-          `Mensalidade: ${formatMoney(ctx.valor)}.`
-      );
-    }
-  }
-
-  return criarLicencaEAbrirPagina(client, ctx, send);
 }
 
 /**
@@ -384,9 +321,9 @@ export async function handlePagamentoMetodo(client, ctx, text, send) {
  */
 export async function confirmarPagamento(paysuiteId, opcoes = {}) {
   const pag = await query(
-    `SELECT p.id, p.cliente_id, p.referencia_id, p.valor, p.status,
-            l.plano_id, l.status AS licenca_status, l.data_expiracao,
-            pl.nome_plano, pr.nome AS produto
+`SELECT p.id, p.tenant_id, p.cliente_id, p.referencia_id, p.valor, p.status,
+             l.plano_id, l.status AS licenca_status, l.data_expiracao,
+             pl.nome_plano, pr.nome AS produto
        FROM pagamentos p
        JOIN licencas l ON l.id = p.referencia_id AND p.referencia_tipo = 'licenca'
        LEFT JOIN planos pl ON pl.id = l.plano_id
@@ -452,7 +389,7 @@ export async function confirmarPagamento(paysuiteId, opcoes = {}) {
     const conta = await query("SELECT dados_conta FROM licencas WHERE id = $1", [pagamento.referencia_id]);
     const dados = conta.rows[0] && conta.rows[0].dados_conta;
     if (dados && dados.valor && pagamento.produto) {
-      noSaas = await ativarLicenca(pagamento.produto, dados.valor, 1);
+      noSaas = await ativarLicenca(pagamento.produto, dados.valor, 1, slugDoPlano(pagamento.produto, pagamento.plano_nome));
     }
   } catch (err) {
     console.error("[SAAS] erro ao activar a licença:", err.message);
@@ -502,280 +439,377 @@ async function notificarDono(resumo, pagamento, paysuiteId, noSaas) {
 
   for (const numero of numeros) {
     try {
-      await sendTextMessage(numero, texto);
+      await sendTextMessage(numero, texto, await getTenantById(pagamento.tenant_id));
     } catch (err) {
       console.error(`[PAGAMENTO] não consegui avisar o dono (${numero}):`, err.message);
     }
   }
 }
 
+/**
+ * O nome do plano no bot não é o slug do plano no sistema do cliente
+ * ("moz teles" aqui é "moztele" lá dentro). Sem esta tradução a conta do
+ * Armazém era renovada mantendo o plano antigo, mesmo quando o cliente tinha
+ * escolhido outro no WhatsApp.
+ *
+ * Se o slug não estiver na lista, devolve null: é melhor renovar o plano
+ * actual do que escrever um plano errado na conta do cliente.
+ */
+const SLUGS_ARMAZEM = {
+  moztele: "moztele",
+  "mozteles": "moztele",
+  interno: "interno",
+  "controlo interno": "interno",
+  "plano controlo interno": "interno",
+  "3pl": "3pl",
+};
+
+function slugDoPlano(produtoNome, nomePlano) {
+  if (getSistemaChave(produtoNome) !== "ARMAZEM") return null;
+  const chave = String(nomePlano || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim();
+  return SLUGS_ARMAZEM[chave] || null;
+}
+
 async function clienteWhatsapp(clienteId) {
   const r = await query("SELECT whatsapp_number FROM clientes WHERE id = $1", [clienteId]);
   return r.rows[0] ? r.rows[0].whatsapp_number : null;
 }
+/* =========================================================================
+ * FLUXO DE PAGAMENTO (opcao 3 do menu)
+ *
+ * O cliente escolhe primeiro o SISTEMA, depois da os seus dados, e o bot
+ * responde com a licenca que a pessoa esta a usar de facto (plano e data de
+ * expiracao, lidos do sistema real) e da opcoes de escolha.
+ * Nunca e mostrado "pagamento pendente" ao cliente.
+ *
+ *   pagamento_escolher_produto -> pagamento_dados_conta
+ *   -> pagamento_escolher_opcao -> pagamento_escolher_plano -> pagamento_metodo
+ * ========================================================================= */
 
-/** Opção 3 do menu — as licenças/pagamentos do cliente. */
+function sistemaDe(nomeProduto) {
+  return getSistemaChave(nomeProduto);
+}
+
+function rotuloSistema(nomeProduto) {
+  return SISTEMA_LABEL[sistemaDe(nomeProduto)] || nomeProduto;
+}
+
+function dataCurta(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toISOString().slice(0, 10);
+}
+
+function diasTexto(dias) {
+  if (dias === null || dias === undefined) return "";
+  if (dias < 0) return " — *ja expirou*";
+  if (dias === 0) return " — *expira hoje*";
+  if (dias === 1) return " — expira amanha";
+  return ` — faltam ${dias} dias`;
+}
+
+async function planosDoProduto(tenantId, produtoId, { incluirOcultos = false } = {}) {
+  const { rows } = await query(
+    `SELECT id, nome_plano, preco
+       FROM planos
+      WHERE tenant_id = $1 AND produto_id = $2 AND ativo = true
+      ORDER BY preco, nome_plano`,
+    [tenantId, produtoId]
+  );
+  if (incluirOcultos) return rows;
+  // "moz teles" é um pacote reservado (Moz Tele). Aparece no catálogo público
+  // só quando é o plano que a conta já tem — nunca como opção avulsa.
+  return rows.filter((p) => p.nome_plano.toLowerCase() !== "moz teles");
+}
+
+/** Opcao 3 do menu — escolher em que sistema quer pagar. */
 export async function showPagamento(client, send) {
-  await setSession(client.id, "pagamento_buscar_conta", {});
+  // TODOS os sistemas activos. Quem ainda não tem preço no bot aparece na
+  // mesma e, ao ser escolhido, passa para um atendente — escondê-lo fazia o
+  // cliente pensar que o sistema não existia.
+  const { rows } = await query(
+    `SELECT pr.id, pr.nome,
+            count(pl.id) FILTER (WHERE pl.ativo)::int AS planos_ativos
+       FROM produtos pr
+       LEFT JOIN planos pl ON pl.tenant_id = $1 AND pl.produto_id = pr.id
+      WHERE pr.tenant_id = $1 AND pr.ativo = true
+      GROUP BY pr.id, pr.nome
+      ORDER BY pr.nome`,
+    [client.tenant_id]
+  );
+
+  await setSession(client.id, "pagamento_escolher_produto", {
+    produtoIds: rows.map((r) => r.id),
+    produtoNomes: rows.map((r) => r.nome),
+    produtoComPreco: rows.map((r) => Number(r.planos_ativos) > 0),
+  });
+
+  const marcador = (r) => {
+    if (Number(r.planos_ativos) === 0) return " 💬";
+    return temConector(r.nome) ? " 📖" : "";
+  };
+  const lista = rows.map((r, i) => `${i + 1}. ${r.nome}${marcador(r)}`).join("\n");
+
   return send(
-    "💳 Vamos ver as suas licenças.\n\n" +
-      "Escreva o *email*, o *ID de cliente* ou o número de licença que usa no sistema.\n\n" +
+    "💳 *Licença e pagamento*\n\n" +
+      "Primeiro: em que *sistema* quer pagar?\n\n" +
+      `${lista}\n\n` +
+      "📖 = dizemos-lhe o plano e a validade que tem hoje.\n" +
+      "💬 = fale com um atendente (ainda sem preço no bot).\n\n" +
+      'Responda com o *número*. Escreva "0" para voltar.'
+  );
+}
+
+export async function handlePagamentoEscolherProduto(client, ctx, text, send) {
+  const texto = text.trim();
+  if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
+    await setSession(client.id, "menu", {});
+    return send("Operação cancelada. Voltamos ao menu principal.");
+  }
+
+  const idx = parseInt(texto, 10) - 1;
+  const nome = ctx.produtoNomes && ctx.produtoNomes[idx];
+  if (!nome) return send('Escolha um número da lista, ou "0" para voltar.');
+
+  const planos = await planosDoProduto(client.tenant_id, ctx.produtoIds[idx]);
+  if (!planos.length) {
+    // Sem preço no bot: não inventamos um valor nem deixamos o cliente num
+    // beco sem saída — passa para um atendente.
+    await falarComHumano(
+      client,
+      async (t) =>
+        send(
+          `*${nome}* ainda não tem preço definido aqui no bot. ` +
+            "Vou passar-lhe a um atendente para tratar disso.\n\n" + t
+        ),
+      await getTenantById(client.tenant_id)
+    );
+    return;
+  }
+
+  await setSession(client.id, "pagamento_dados_conta", {
+    produtoId: ctx.produtoIds[idx],
+    produto: nome,
+  });
+
+  return send(
+    `Escolheu *${nome}* 👍\n\n` +
+      "Agora preciso dos *seus dados* para ver a sua licença actual.\n\n" +
+      "Escreva o *email* com que a sua conta está registada no sistema" +
+      (sistemaDe(nome) === "GYMAR" ? ", ou o seu *nome / ID de cliente*" : "") +
+      ":\n\n" +
       'Escreva "0" para voltar.'
   );
 }
 
-export async function handlePagamentoBuscarConta(client, ctx, text, send) {
+export async function handlePagamentoDadosConta(client, ctx, text, send) {
   const texto = text.trim();
   if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
     await setSession(client.id, "menu", {});
     return send("Operação cancelada. Voltamos ao menu principal.");
   }
-
-  const { rows } = await query(
-    `SELECT l.id, l.status, l.data_expiracao,
-            pl.nome_plano, pl.preco, pr.nome AS produto,
-            pg.id AS pagamento_id, pg.status AS pagamento_status,
-            pg.valor
-       FROM licencas l
-       LEFT JOIN planos pl ON pl.id = l.plano_id
-       LEFT JOIN produtos pr ON pr.id = pl.produto_id
-       LEFT JOIN LATERAL (
-         SELECT id, status, valor FROM pagamentos
-          WHERE referencia_tipo = 'licenca' AND referencia_id = l.id
-          ORDER BY id DESC LIMIT 1
-       ) pg ON true
-      WHERE l.tenant_id = $1
-        AND ( LOWER(l.dados_conta->>'valor') = LOWER($2)
-              OR l.id::text = $2 )
-      ORDER BY l.id DESC`,
-    [client.tenant_id, texto]
-  );
-
-  if (!rows.length) {
+  if (texto.length < 3) {
     return send(
-      `Não encontrei nenhuma licença associada à conta "${texto}". 🔎\n\n` +
-      'Tente novamente com outro email/ID ou escreva "0" para cancelar.'
+      'Esse dado parece incompleto. Escreva o *email* da sua conta, ou "0" para voltar.'
     );
   }
 
-  let msg = `💳 Licenças da conta *${texto}*:\n\n`;
-  const licencasIds = [];
-
-  for (const l of rows) {
-    const valor = Number(l.preco) > 0 ? formatMoney(l.preco) : "sob consulta";
-
-    msg += `*${l.id}.* ${l.produto || "?"} — ${l.nome_plano || "?"}\n`;
-    msg += `    Preço: ${valor}\n`;
-
-    if (l.status === "ativa" && l.data_expiracao) {
-      msg += `    Estado: activa até ${new Date(l.data_expiracao).toISOString().slice(0, 10)}\n`;
-    } else if (l.data_expiracao) {
-      msg += `    Estado: ${l.status} (expirou a ${new Date(l.data_expiracao).toISOString().slice(0, 10)})\n`;
-    } else {
-      msg += `    Estado: ${l.status}\n`;
-    }
-
-    if (l.pagamento_id && l.pagamento_status === "pendente") {
-      msg += `    Pagamento #${l.pagamento_id}: por pagar\n`;
-    } else if (l.pagamento_id) {
-      msg += `    Pagamento #${l.pagamento_id}: ${l.pagamento_status}\n`;
-    }
-
-    msg += "\n";
-    if (!licencasIds.includes(l.id)) licencasIds.push(l.id);
-  }
-
-  msg +=
-    "Escolha o número da licença que quer pagar ou renovar:\n" +
-    `(${licencasIds.join(", ")})\n\n` +
-    'Escreva "0" para voltar.';
-
-  await setSession(client.id, "pagamento_escolher_licenca", { emailOuId: texto });
-  return send(msg);
-}
-
-export async function handlePagamentoEscolherLicenca(client, ctx, text, send) {
-  const texto = text.trim();
-  if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
-    await setSession(client.id, "menu", {});
-    return send("Operação cancelada. Voltamos ao menu principal.");
-  }
-
-  const licencaId = parseInt(texto, 10);
-  if (isNaN(licencaId)) {
-    return send('Por favor, digite um número de licença válido ou "0" para cancelar.');
-  }
-
-  // Verificar se a licença pertence à conta inserida
-  const { rows } = await query(
-    `SELECT l.id, l.status, l.data_expiracao, pl.preco, pl.nome_plano, pr.nome AS produto
-       FROM licencas l
-       LEFT JOIN planos pl ON pl.id = l.plano_id
-       LEFT JOIN produtos pr ON pr.id = pl.produto_id
-      WHERE l.tenant_id = $1 AND l.id = $2
-        AND ( LOWER(l.dados_conta->>'valor') = LOWER($3)
-              OR l.id::text = $3 )`,
-    [client.tenant_id, licencaId, ctx.emailOuId]
-  );
-
-  const licenca = rows[0];
-  if (!licenca) {
-    return send('Licença não encontrada para esta conta. Tente outro número ou "0" para cancelar.');
-  }
-
-  const descricao = `${licenca.produto} — ${licenca.nome_plano}`;
-
-  // Antes de propor uma cobrança, perguntamos à PaySuite se algum pedido
-  // anterior desta licença já foi pago. Sem isto, um cliente que pagou mas
-  // não recebeu a confirmação podia ser cobrado uma segunda vez.
-  const pago = await confirmarSeJaPago(licencaId);
-  if (pago && pago.ok) {
-    return send(
-      `✅ *O seu pagamento já estava confirmado!*\n\n` +
-        `${descricao}\n` +
-        (pago.data_expiracao
-          ? `A licença está activa até ${pago.data_expiracao.slice(0, 10)}.\n`
-          : "") +
-        "\nNão é necessário pagar novamente."
-    );
-  }
-
-  // Licença ainda activa: avisamos e deixamos a decisão ao cliente. Não
-  // bloqueamos — renovar antecipadamente é legítimo.
-  if (licenca.status === "ativa" && licenca.data_expiracao) {
-    const expira = new Date(licenca.data_expiracao);
-    if (expira > new Date()) {
-      console.log(
-        `[ADMIN] #${licencaId} ainda activa até ${expira.toISOString().slice(0, 10)} — a perguntar ao cliente`
-      );
-      await setSession(client.id, "pagamento_confirmar_renovacao", {
-        licencaId,
-        emailOuId: ctx.emailOuId,
-        ate: expira.toISOString(),
-      });
-      return send(
-        `ℹ️ Esta licença já está *activa* até ${expira.toISOString().slice(0, 10)}.\n\n` +
-          `*${descricao}* — ${formatMoney(licenca.preco)}\n\n` +
-          'Quer renovar mesmo assim? Responda "sim" para continuar, ou "0" para voltar.'
-      );
-    }
-  }
-
-  return criarPagamentoParaLicenca(client, licenca, descricao, send);
+  const novoCtx = { ...ctx, conta: texto };
+  await setSession(client.id, "pagamento_escolher_opcao", novoCtx);
+  return mostrarOpcoesLicenca(client, novoCtx, send);
 }
 
 /**
- * Confirma com a PaySuite se algum pedido anterior desta licença já foi
- * pago. Devolve o resultado de confirmarPagamento() ou null se não houver
- * pedido pago.
+ * Responde com a licenca REAL da conta (plano + validade, lidos do sistema)
+ * e com as opcoes de escolha. Nunca bloqueia a venda: se nao souber ler,
+ * mostra os planos na mesma.
  */
-async function confirmarSeJaPago(licencaId) {
-  const anteriores = await query(
-    `SELECT paysuite_id FROM pagamentos
-      WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND paysuite_id IS NOT NULL
-      ORDER BY id DESC LIMIT 5`,
-    [licencaId]
-  );
+async function mostrarOpcoesLicenca(client, ctx, send) {
+  const lic = await consultarLicencaSaaS(ctx.produto, ctx.conta);
 
-  for (const ant of anteriores.rows) {
-    let estado = "";
-    try {
-      const s = await getPaySuiteCharge(String(ant.paysuite_id));
-      estado = String(s.status || (s.transaction && s.transaction.status) || "").toLowerCase();
-    } catch (err) {
-      // A PaySuite não respondeu — não arriscamos dizer que está pago.
-      console.error(`[PAYSUITE] não consegui ler o pedido ${ant.paysuite_id}:`, err.message);
-      continue;
-    }
-    if (ESTADOS_PAGOS.has(estado)) {
-      // O dinheiro já entrou mas o webhook não activou a licença.
-      // Confirmamos em vez de cobrar outra vez.
-      const r = await confirmarPagamento(String(ant.paysuite_id));
-      if (r.ok) return r;
-    }
-  }
-  return null;
-}
-
-/**
- * Cria (ou reutiliza) o pagamento de uma licença e envia a página de
- * checkout. O valor vem sempre do plano — nunca de um valor enviado pelo
- * cliente.
- */
-async function criarPagamentoParaLicenca(client, licenca, descricao, send) {
-  const licencaId = licenca.id;
-
-  // Se já existe um pagamento pendente, reutiliza-se em vez de duplicar.
-  const pag = await query(
-    `SELECT id, valor FROM pagamentos
-      WHERE referencia_tipo = 'licenca' AND referencia_id = $1 AND status = 'pendente'
-      ORDER BY id DESC LIMIT 1`,
-    [licencaId]
-  );
-
-  let pagamentoId;
-  let valor;
-
-  if (pag.rows.length > 0) {
-    pagamentoId = pag.rows[0].id;
-    valor = pag.rows[0].valor;
+  let cabecalho;
+  if (lic.semConector) {
+    cabecalho =
+      `ℹ️ Em *${rotuloSistema(ctx.produto)}* não temos leitura automática da sua licença.\n\n`;
+  } else if (lic.contaNaoEncontrada) {
+    cabecalho =
+      `🔎 Não encontrei a conta *"${ctx.conta}"* em *${rotuloSistema(ctx.produto)}*.\n` +
+      `Procuramos pelo ${lic.campo === "nome ou id" ? "nome ou ID" : "email"}. Verifique o dado e escreva-o outra vez.\n\n`;
+  } else if (!lic.ok) {
+    cabecalho =
+      "⚠️ Não consegui ler a sua licença no sistema neste momento.\n\n" +
+      "Se já renovou e o erro continuar, fale com um atendente.\n\n";
   } else {
-    valor = licenca.preco;
-    const novoPag = await query(
-      `INSERT INTO pagamentos (tenant_id, cliente_id, referencia_tipo, referencia_id, valor, moeda, status)
-       VALUES ($1, $2, 'licenca', $3, $4, 'MZN', 'pendente') RETURNING id`,
-      [client.tenant_id, client.id, licencaId, valor]
-    );
-    pagamentoId = novoPag.rows[0].id;
-    console.log(`[ADMIN] Novo pagamento #${pagamentoId} para a licença #${licencaId}`);
+    const linhas = [`👤 *${lic.nome}*`];
+    if (lic.plano) linhas.push(`📦 Plano actual: *${lic.plano}*`);
+    linhas.push(`📅 Válido até *${dataCurta(lic.validade)}*${diasTexto(lic.dias)}`);
+    cabecalho =
+      `✅ *Conta encontrada em ${rotuloSistema(ctx.produto)}*\n\n${linhas.join("\n")}\n\n`;
   }
 
-  await setSession(client.id, "pagamento_metodo", {
-    licencaId,
-    pagamentoId,
-    valor,
-    descricao,
+  // Incluídos os planos ocultos: é assim que o "moz teles" reservado é
+  // encontrado quando é o plano que a conta já tem.
+  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId, { incluirOcultos: true });
+  const planoCliente = lic.ok
+    ? planoQueCorresponde(planos, lic.planoSlug, lic.plano, lic.precoSugerido)
+    : null;
+  const precoCliente = planoCliente ? planoCliente.preco : lic.precoSugerido || null;
+
+  const opcoes = [];
+  if (planoCliente) {
+    opcoes.push({
+      accao: "pagar",
+      planoId: planoCliente.id,
+      rotulo: `*Renovar* ${planoCliente.nome_plano} — ${formatMoney(planoCliente.preco)}/mês`,
+    });
+    cabecalho += `💰 Renovação: ${formatMoney(planoCliente.preco)}/mês.\n\n`;
+  } else if (precoCliente) {
+    cabecalho += `💰 O seu plano actual custa ${formatMoney(precoCliente)}/mês.\n\n`;
+  }
+  opcoes.push({ accao: "planos", rotulo: "Ver *planos* e preços" });
+  opcoes.push({ accao: "humano", rotulo: "Falar com um *atendente*" });
+
+  await setSession(client.id, "pagamento_escolher_opcao", {
+    ...ctx,
+    planoClienteId: planoCliente ? planoCliente.id : null,
+    opcoes: opcoes.map((o) => o.accao),
   });
 
-  return abrirPaginaPagamento(client, pagamentoId, valor, descricao, send);
+  return send(
+    cabecalho +
+      "O que deseja fazer?\n\n" +
+      opcoes.map((o, i) => `${i + 1}. ${o.rotulo}`).join("\n") +
+      '\n\nResponda com o *número*, ou "0" para voltar.'
+  );
 }
 
-/**
- * O cliente respondeu "sim" à pergunta de renovação antecipada.
- */
-export async function handlePagamentoConfirmarRenovacao(client, ctx, text, send) {
-  const resposta = text.trim().toLowerCase();
+/** Encontra o plano do catalogo que corresponde ao slug/nome que o cliente tem. */
+function planoQueCorresponde(planos, planoSlug, planoNome, precoReal = null) {
+  const alvo = String(planoSlug || planoNome || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!alvo) return null;
 
-  if (resposta === "0" || COMANDOS_MENU.includes(resposta)) {
+  const achado =
+    planos.find((p) => {
+      const n = p.nome_plano.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return n === alvo || n.startsWith(alvo) || alvo.startsWith(n);
+    }) || null;
+
+  // Match por nome mas com preço muito diferente significa que não é o mesmo
+  // plano: no Xonguile, "Premium Especial" (2223) começava por "Premium" e
+  // o bot_propunha renove-lo a 6300. Cobrar o valor errado em silêncio é pior
+  // do que não renomear: aqui devolvemos null e o cliente vê a diferença.
+  if (achado && precoReal && Number.isFinite(Number(precoReal))) {
+    const dif = Math.abs(Number(achado.preco) - Number(precoReal)) / Number(precoReal);
+    if (dif > 0.05) return null;
+  }
+  return achado;
+}
+
+export async function handlePagamentoEscolherOpcao(client, ctx, text, send) {
+  const texto = text.trim();
+  if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
     await setSession(client.id, "menu", {});
     return send("Operação cancelada. Voltamos ao menu principal.");
   }
 
-  if (!["sim", "s", "yes", "y", "ok"].includes(resposta)) {
-    return send('Responda "sim" para renovar ou "0" para voltar.');
-  }
+  const n = parseInt(texto, 10);
+  const accao = ctx.opcoes && ctx.opcoes[n - 1];
+  if (!accao) return send('Escolha um número da lista, ou "0" para voltar.');
 
-  const { rows } = await query(
-    `SELECT l.id, l.status, l.data_expiracao, pl.preco, pl.nome_plano, pr.nome AS produto
-       FROM licencas l
-       LEFT JOIN planos pl ON pl.id = l.plano_id
-       LEFT JOIN produtos pr ON pr.id = pl.produto_id
-      WHERE l.tenant_id = $1 AND l.id = $2
-        AND ( LOWER(l.dados_conta->>'valor') = LOWER($3)
-              OR l.id::text = $3 )`,
-    [client.tenant_id, ctx.licencaId, ctx.emailOuId]
+  if (accao === "humano") {
+    // Sem o tenant, o aviso ao dono sairia com o WHATSAPP_TOKEN do ambiente,
+    // que pode estar expirado. O token do tenant é o que funciona.
+    return falarComHumano(client, send, await getTenantById(client.tenant_id));
+  }
+  if (accao === "planos") return mostrarPlanos(client, ctx, send);
+
+  // Incluídos os planos ocultos para conseguir resolver o que está seleccionado.
+  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId, { incluirOcultos: true });
+  const plano = planos.find((p) => p.id === ctx.planoClienteId);
+  if (!plano) return mostrarPlanos(client, ctx, send);
+
+  return abrirPagamentoParaPlano(client, ctx, plano, send);
+}
+
+/**
+ * Impede cobrar um plano que não existe no sistema do cliente.
+ *
+ * O catálogo do bot e o catálogo do Smart Warehouse não são o mesmo: lá
+ * dentro os planos são moztele (3000), interno (3500) e 3pl (5000). Se o
+ * cliente escolhesse um plano do catálogo que não tiver slug conhecido, a
+ * conta continuava no plano antigo e o valor cobrado não correspondia a
+ * nada — por isso paramos aqui e passamos para um atendente.
+ */
+async function planoExisteNoCliente(produto, nomePlano) {
+  const sistema = sistemaDe(produto);
+  if (sistema !== "ARMAZEM") return true;
+  return Boolean(slugDoPlano(produto, nomePlano));
+}
+
+async function mostrarPlanos(client, ctx, send, prefixo = "") {
+  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId);
+  if (!planos.length) return send("Não há planos disponíveis para este sistema.");
+
+  await setSession(client.id, "pagamento_escolher_plano", {
+    produtoId: ctx.produtoId,
+    produto: ctx.produto,
+    conta: ctx.conta,
+  });
+
+  return send(
+    (prefixo ? prefixo + "\n\n" : "") +
+      `📦 *Planos de ${rotuloSistema(ctx.produto)}*\n\n` +
+      planos
+        .map((p, i) => `${i + 1}. *${p.nome_plano}* — ${formatMoney(p.preco)}/mês`)
+        .join("\n") +
+      '\n\nResponda com o *número* do plano, ou "0" para voltar.'
   );
+}
 
-  const licenca = rows[0];
-  if (!licenca) {
+export async function handlePagamentoEscolherPlano(client, ctx, text, send) {
+  const texto = text.trim();
+  if (texto === "0" || COMANDOS_MENU.includes(texto.toLowerCase())) {
     await setSession(client.id, "menu", {});
-    return send('Licença não encontrada. Escreva "menu" para voltar.');
+    return send("Operação cancelada. Voltamos ao menu principal.");
   }
 
-  return criarPagamentoParaLicenca(
+  const planos = await planosDoProduto(client.tenant_id, ctx.produtoId);
+  const plano = planos[parseInt(texto, 10) - 1];
+  if (!plano) return send('Escolha um número válido da lista, ou "0" para voltar.');
+
+  return abrirPagamentoParaPlano(client, ctx, plano, send);
+}
+
+async function abrirPagamentoParaPlano(client, ctx, plano, send) {
+  if (!(await planoExisteNoCliente(ctx.produto, plano.nome_plano))) {
+    console.error(
+      `[PAGAMENTO] plano "${plano.nome_plano}" de "${ctx.produto}" não existe no sistema do cliente — venda bloqueada`
+    );
+    await avisarAdmin(
+      `🚫 *Venda bloqueada*\n\n` +
+        `O plano *${plano.nome_plano}* do catálogo não existe no sistema ` +
+        `*${rotuloSistema(ctx.produto)}*.\n\n` +
+        `Cliente: ${client.whatsapp_number}\n` +
+        `Alinhe o catálogo com os planos reais antes de o vender.`,
+      client.tenant_id
+    );
+    return falarComHumano(client, send, await getTenantById(client.tenant_id));
+  }
+
+  return criarLicencaEAbrirPagina(
     client,
-    licenca,
-    `${licenca.produto} — ${licenca.nome_plano}`,
+    {
+      planoId: plano.id,
+      preco: plano.preco,
+      valor: plano.preco,
+      produto: rotuloSistema(ctx.produto),
+      nome_plano: plano.nome_plano,
+      saasUser: ctx.conta,
+    },
     send
   );
 }

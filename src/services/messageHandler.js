@@ -12,14 +12,12 @@ import {
 import { showProdutos, handlePlanoEscolha } from "../flows/planos.js";
 import {
   showPagamento,
+  handlePagamentoEscolherProduto,
+  handlePagamentoDadosConta,
+  handlePagamentoEscolherOpcao,
+  handlePagamentoEscolherPlano,
   handlePlanoContratar,
   handlePagamentoMetodo,
-  handlePagamentoSaasUser,
-  handlePagamentoSaasSenha,
-  handlePagamentoHefelgymId,
-  handlePagamentoBuscarConta,
-  handlePagamentoEscolherLicenca,
-  handlePagamentoConfirmarRenovacao
 } from "../flows/pagamento.js";
 import { falarComHumano } from "../flows/humano.js";
 
@@ -94,18 +92,14 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return handlePlanoEscolha(client, ctx, text, send);
     case "planos_plano":
       return handlePlanoContratar(client, ctx, text, send);
-    case "pagamento_buscar_conta":
-      return handlePagamentoBuscarConta(client, ctx, text, send);
-    case "pagamento_escolher_licenca":
-      return handlePagamentoEscolherLicenca(client, ctx, text, send);
-    case "pagamento_confirmar_renovacao":
-      return handlePagamentoConfirmarRenovacao(client, ctx, text, send);
-    case "pagamento_saas_user":
-      return handlePagamentoSaasUser(client, ctx, text, send);
-    case "pagamento_saas_senha":
-      return handlePagamentoSaasSenha(client, ctx, text, send);
-    case "pagamento_hefelgym_id":
-      return handlePagamentoHefelgymId(client, ctx, text, send);
+    case "pagamento_escolher_produto":
+      return handlePagamentoEscolherProduto(client, ctx, text, send);
+    case "pagamento_dados_conta":
+      return handlePagamentoDadosConta(client, ctx, text, send);
+    case "pagamento_escolher_opcao":
+      return handlePagamentoEscolherOpcao(client, ctx, text, send);
+    case "pagamento_escolher_plano":
+      return handlePagamentoEscolherPlano(client, ctx, text, send);
     case "pagamento_metodo":
       return handlePagamentoMetodo(client, ctx, text, send);
     case "humano":
