@@ -280,6 +280,22 @@ router.post("/paysuite-webhook", async (req, res) => {
     return res.json({ ok: true, accao: "licenca_activada", ...r });
   } catch (err) {
     console.error("[PAYSUITE] erro ao confirmar pagamento:", err);
+    // Se a PaySuite recusou as credenciais, há clientes que pagaram e vão
+    // ficar sem licença. O dono tem de saber já, não no fim do mês.
+    if (/unauthenticated|forbidden|401|403/i.test(err.message)) {
+      const aviso =
+        `🚨 *Pagamento recebido mas não confirmado*\n\n` +
+        `A PaySuite recusou o pedido ${paysuiteId}: ${err.message}\n\n` +
+        `Há um cliente que pagou e a licença não foi activada. ` +
+        "Actualiza PAYSUITE_API_TOKEN no Vercel e confirma o pagamento à mão.";
+      for (const numero of env.adminNumbers) {
+        try {
+          await sendTextMessage(numero, aviso);
+        } catch (e) {
+          console.error("[PAYSUITE] não consegui avisar o dono:", e.message);
+        }
+      }
+    }
     return res.status(500).json({ ok: false, erro: err.message });
   }
 });

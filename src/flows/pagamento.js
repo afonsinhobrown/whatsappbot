@@ -37,6 +37,44 @@ async function criarLicencaEAbrirPagina(client, ctx, send) {
     ? { tipo: "id_ginasio", valor: hefelgymId }
     : { tipo: "email", valor: saasUser };
 
+  const descricao = `${produto} — ${nome_plano}`;
+
+  // Reutilizar o que já existe para esta conta e este plano, em vez de criar
+  // uma licença nova de cada vez. Sem isto, cada nova tentativa (o cliente
+  // reenvia a senha, clica duas vezes, ou o bot repete a pergunta) gerava
+  // outra licença + outro pagamento + outro pedido na PaySuite — foi assim
+  // que apareceram 17 cobranças iguais para a mesma pessoa.
+  const existente = await query(
+    `SELECT l.id AS licenca_id, p.id AS pagamento_id
+       FROM licencas l
+       JOIN pagamentos p
+         ON p.referencia_tipo = 'licenca' AND p.referencia_id = l.id
+      WHERE l.tenant_id = $1
+        AND l.plano_id = $2
+        AND l.status = 'pendente'
+        AND LOWER(l.dados_conta->>'valor') = LOWER($3)
+      ORDER BY p.id DESC
+      LIMIT 1`,
+    [client.tenant_id, planoId, conta.valor]
+  );
+
+  if (existente.rows.length > 0) {
+    const { licenca_id: licencaId, pagamento_id: pagamentoId } = existente.rows[0];
+    console.log(
+      `[ADMIN] Reaproveitando licença #${licencaId} / pagamento #${pagamentoId} ` +
+        `para ${produto} (conta ${conta.valor})`
+    );
+
+    await setSession(client.id, "pagamento_metodo", {
+      licencaId,
+      pagamentoId,
+      valor,
+      descricao,
+    });
+
+    return abrirPaginaPagamento(client, pagamentoId, valor, descricao, send);
+  }
+
   const lic = await query(
     `INSERT INTO licencas (tenant_id, cliente_id, plano_id, status, dados_conta)
      VALUES ($1, $2, $3, 'pendente', $4::jsonb) RETURNING id`,
@@ -50,8 +88,6 @@ async function criarLicencaEAbrirPagina(client, ctx, send) {
     [client.tenant_id, client.id, licencaId, valor]
   );
   const pagamentoId = pag.rows[0].id;
-
-  const descricao = `${produto} — ${nome_plano}`;
 
   await setSession(client.id, "pagamento_metodo", {
     licencaId,
@@ -81,6 +117,21 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
     return send(textoLinkPagamento(existente.paysuite_checkout_url, descricao, valor, false));
   }
 
+  // Já existe um pedido na PaySuite mas sem link guardado (resposta truncada,
+  // gravacao falhada, etc.). Criar outro aqui produzia dozens de pedidos
+  // duplicados para a mesma licenca. Recusamos e pedimos intervencao.
+  if (existente && existente.paysuite_id) {
+    console.error(
+      `[PAYSUITE] pagamento #${pagamentoId} ja tem pedido ${existente.paysuite_id} mas sem link. ` +
+        "Nao crio outro para nao duplicar a cobranca."
+    );
+    return send(
+      `⚠️ Já existe um pedido de pagamento em aberto para *${descricao}*.\n\n` +
+        "Não vou gerar outro para não lhe cobrar duas vezes. Fale com um atendente " +
+        'e resolvemos já — escreva "5".'
+    );
+  }
+
   const base = baseUrl();
   try {
     const charge = await createPaySuiteCharge(valor, pagamentoId, {
@@ -89,27 +140,56 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
       returnUrl: `${base}/admin`,
     });
 
-    await query(
-      "UPDATE pagamentos SET paysuite_id = $2, paysuite_checkout_url = $3 WHERE id = $1",
-      [pagamentoId, charge.id || null, charge.checkoutUrl || null]
-    );
-
-    if (!charge.checkoutUrl) {
-      return send(
-        `🧾 *${descricao}* — ${formatMoney(valor)}\n\n` +
-          "Não foi possível gerar a página de pagamento. Fale com um atendente:\n" +
-          'Escreva "5" e resolvemos já.'
+    // Só gravamos o que é útil. Sem checkout_url não temos nada para enviar
+    // ao cliente, portanto não registamos o pedido — caso contrário ficaria
+    // "ocupado" sem link e o cliente nunca conseguiria pagar.
+    if (charge.checkoutUrl) {
+      await query(
+        "UPDATE pagamentos SET paysuite_id = $2, paysuite_checkout_url = $3 WHERE id = $1",
+        [pagamentoId, charge.id || null, charge.checkoutUrl]
       );
+      return send(textoLinkPagamento(charge.checkoutUrl, descricao, valor, true));
     }
 
-    return send(textoLinkPagamento(charge.checkoutUrl, descricao, valor, true));
+    return send(
+      `🧾 *${descricao}* — ${formatMoney(valor)}\n\n` +
+        "Não foi possível gerar a página de pagamento. Fale com um atendente:\n" +
+        'Escreva "5" e resolvemos já.'
+    );
   } catch (err) {
     console.error("[PAYSUITE] erro ao criar o pedido de pagamento:", err.message);
+    // Credenciais da PaySuite erradas ou expiradas acontece sem aviso e
+    // silencia o bot inteiro: o cliente vê uma mensagem de erro e desiste.
+    // Avisamos o dono para que a falha seja vista antes de perder uma venda.
+    if (/unauthenticated|forbidden|401|403/i.test(err.message)) {
+      await avisarAdmin(
+        `🚨 *PaySuite recusou o pedido*\n\n` +
+          `O token da API da PaySuite foi recusado (${err.message}).\n\n` +
+          `Nenhum cliente consegue concluir um pagamento até isto ser corrigido. ` +
+          "Actualiza PAYSUITE_API_TOKEN no Vercel."
+      );
+    }
     return send(
       `⚠️ Não consegui abrir a página de pagamento: ${err.message}\n\n` +
         "Fale com um atendente para resolver:\n" +
         'Escreva "5".'
     );
+  }
+}
+
+/**
+ * Avisa o dono de uma falha técnica. Nunca deve interromper o fluxo do
+ * cliente, por isso os erros são engolidos.
+ */
+async function avisarAdmin(texto) {
+  const numeros = env.adminNumbers;
+  if (!numeros.length) return;
+  for (const numero of numeros) {
+    try {
+      await sendTextMessage(numero, texto);
+    } catch (err) {
+      console.error(`[PAYSUITE] não consegui avisar o dono (${numero}):`, err.message);
+    }
   }
 }
 
