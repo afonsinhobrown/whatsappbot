@@ -572,8 +572,11 @@ export async function showPagamento(client, send) {
   });
 
   const marcador = (r) => {
-    if (Number(r.planos_ativos) === 0) return " 💬";
-    return temConector(r.nome) ? " 📖" : "";
+    // Com conector lemos os planos e os preços na base de dados do próprio
+    // sistema, portanto o catálogo do bot deixar de ter Planos Activos não
+    // significa nada. Só sem conector é que o catálogo manda.
+    if (temConector(r.nome)) return " 📖";
+    return Number(r.planos_ativos) === 0 ? " 💬" : "";
   };
   const lista = rows.map((r, i) => `${i + 1}. ${r.nome}${marcador(r)}`).join("\n");
 
@@ -581,7 +584,7 @@ export async function showPagamento(client, send) {
     "💳 *Licença e pagamento*\n\n" +
       "Primeiro: em que *sistema* quer pagar?\n\n" +
       `${lista}\n\n` +
-      "📖 = dizemos-lhe o plano e a validade que tem hoje.\n" +
+      "📖 = Trayemos o plano e o preço desse sistema.\n" +
       "💬 = fale com um atendente (ainda sem preço no bot).\n\n" +
       'Responda com o *número*. Escreva "0" para voltar.'
   );
@@ -598,10 +601,13 @@ export async function handlePagamentoEscolherProduto(client, ctx, text, send) {
   const nome = ctx.produtoNomes && ctx.produtoNomes[idx];
   if (!nome) return send('Escolha um número da lista, ou "0" para voltar.');
 
-  const planos = await planosDoProduto(client.tenant_id, ctx.produtoIds[idx]);
-  if (!planos.length) {
-    // Sem preço no bot: não inventamos um valor nem deixamos o cliente num
-    // beco sem saída — passa para um atendente.
+  // O catálogo do bot deixou de ser a fonte de verdade dos preços. Antes de
+  // concluir que um sistema não tem preço, perguntamos à base de dados dele:
+  // os planos do cliente é que são os planos que ele vende.
+  const temPreco = await temPlanosReais(nome, client, ctx.produtoIds[idx]);
+  if (!temPreco) {
+    // Nem o catálogo nem a base de dados do sistema têm preço. Não inventamos
+    // um valor, por isso aqui é mesmo um humano que resolve.
     await falarComHumano(
       client,
       async (t) =>
@@ -621,11 +627,11 @@ export async function handlePagamentoEscolherProduto(client, ctx, text, send) {
 
   return send(
     `Escolheu *${nome}* 👍\n\n` +
-      "Agora preciso dos *seus dados* para ver a sua licença actual.\n\n" +
-      "Escreva o *email* com que a sua conta está registada no sistema" +
+      "Agora preciso do *email* com que a sua conta está registada no sistema" +
       (sistemaDe(nome) === "GYMAR" ? ", ou o seu *nome / ID de cliente*" : "") +
-      ":\n\n" +
-      'Escreva "0" para voltar.'
+      ".\n\n" +
+      "É com este dado que a sua licença fica actualizada depois do pagamento." +
+      ' Escreva "0" para voltar.'
   );
 }
 
@@ -637,7 +643,8 @@ export async function handlePagamentoDadosConta(client, ctx, text, send) {
   }
   if (texto.length < 3) {
     return send(
-      'Esse dado parece incompleto. Escreva o *email* da sua conta, ou "0" para voltar.'
+      'Esse dado parece incompleto. Escreva o *email* com que a conta está registada, ' +
+        'ou o *nome / ID* no caso do ginásio. Escreva "0" para voltar.'
     );
   }
 
@@ -659,9 +666,13 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
     cabecalho =
       `ℹ️ Em *${rotuloSistema(ctx.produto)}* não temos leitura automática da sua licença.\n\n`;
   } else if (lic.contaNaoEncontrada) {
+    // Não encontramos a conta com este dado. Isso não trava o pagamento: o
+    // cliente sabe quem é, o preço vem do sistema, e a activação resolve-se
+    // depois. Devolvemos o dado para ele confirmar e seguimos para os planos.
     cabecalho =
-      `🔎 Não encontrei a conta *"${ctx.conta}"* em *${rotuloSistema(ctx.produto)}*.\n` +
-      `Procuramos pelo ${lic.campo === "nome ou id" ? "nome ou ID" : "email"}. Verifique o dado e escreva-o outra vez.\n\n`;
+      `ℹ️ Não encontrei a conta *"${ctx.conta}"* em *${rotuloSistema(ctx.produto)}* ` +
+      `(${lic.campo === "nome ou id" ? "nome ou ID" : "email"}).\n` +
+      "Se o email não for o certo, escreva-o outra vez. Se for, siga e escolha o plano.\n\n";
   } else if (!lic.ok) {
     cabecalho =
       "⚠️ Não consegui ler a sua licença no sistema neste momento.\n\n" +
@@ -680,7 +691,6 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
   const planoCliente = lic.ok
     ? planoQueCorresponde(planos, lic.planoSlug, lic.plano, lic.precoSugerido)
     : null;
-  const precoCliente = planoCliente ? planoCliente.preco : lic.precoSugerido || null;
 
   const opcoes = [];
   if (planoCliente) {
@@ -689,8 +699,6 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
       rotulo: `*Renovar* ${planoCliente.nome_plano} — ${formatMoney(planoCliente.preco)}/mês`,
     });
     cabecalho += `💰 Renovação: ${formatMoney(planoCliente.preco)}/mês.\n\n`;
-  } else if (precoCliente) {
-    cabecalho += `💰 O seu plano actual custa ${formatMoney(precoCliente)}/mês.\n\n`;
   }
   opcoes.push({ accao: "planos", rotulo: "Ver *planos* e preços" });
   opcoes.push({ accao: "humano", rotulo: "Falar com um *atendente*" });
@@ -774,18 +782,19 @@ export async function handlePagamentoEscolherOpcao(client, ctx, text, send) {
 }
 
 /**
- * Impede cobrar um plano que não existe no sistema do cliente.
+ * Este sistema tem planos para cobrar?
  *
- * O catálogo do bot e o catálogo do Smart Warehouse não são o mesmo: lá
- * dentro os planos são moztele (3000), interno (3500) e 3pl (5000). Se o
- * cliente escolhesse um plano do catálogo que não tiver slug conhecido, a
- * conta continuava no plano antigo e o valor cobrado não correspondia a
- * nada — por isso paramos aqui e passamos para um atendente.
+ * Primeiro a base de dados do sistema (os planos que ele vende), depois o
+ * catálogo do bot. Só quando os dois estão vazios é que não há preço.
  */
-async function planoExisteNoCliente(produto, nomePlano) {
-  const sistema = sistemaDe(produto);
-  if (sistema !== "ARMAZEM") return true;
-  return Boolean(slugDoPlano(produto, nomePlano));
+async function temPlanosReais(produto, client, produtoId) {
+  try {
+    const reais = await listarPlanosSaaS(produto);
+    if (reais && reais.ok && reais.planos.length) return true;
+  } catch (err) {
+    console.warn(`[PAGAMENTO] leitura de planos de ${produto} falhou:`, err.message);
+  }
+  return (await planosDoProduto(client.tenant_id, produtoId)).length > 0;
 }
 
 /**
@@ -860,23 +869,16 @@ export async function handlePagamentoEscolherPlano(client, ctx, text, send) {
 }
 
 async function abrirPagamentoParaPlano(client, ctx, plano, send) {
-  // Um plano lido da base de dados do cliente é, por definição, um plano que
-  // existe lá dentro: não há o que validar contra o catálogo.
-  if (plano.id !== null && plano.id !== undefined) {
-    if (!(await planoExisteNoCliente(ctx.produto, plano.nome_plano))) {
-      console.error(
-        `[PAGAMENTO] plano "${plano.nome_plano}" de "${ctx.produto}" não existe no sistema do cliente — venda bloqueada`
-      );
-      await avisarAdmin(
-        `🚫 *Venda bloqueada*\n\n` +
-          `O plano *${plano.nome_plano}* do catálogo não existe no sistema ` +
-          `*${rotuloSistema(ctx.produto)}*.\n\n` +
-          `Cliente: ${client.whatsapp_number}\n` +
-          `Alinhe o catálogo com os planos reais antes de o vender.`,
-        client.tenant_id
-      );
-      return falarComHumano(client, send, await getTenantById(client.tenant_id));
-    }
+  // Nada trava a venda. O plano vem da base de dados do sistema do cliente,
+  // o preço é o que lá está, e o pagamento é feito na PaySuite. Se a
+  // activação lá dentro não conseguir ser feita (conta com outro email, plano
+  // sem equivalência), isso é resolvido depois de o dinheiro entrar — nunca
+  // é motivo para recusar a cobrança.
+  if (plano.slug === null && !plano.id) {
+    console.warn(
+      `[PAGAMENTO] plano "${plano.nome_plano}" de "${ctx.produto}" veio do catálogo do bot ` +
+        "sem slug do sistema; a activação pode precisar de um atendente"
+    );
   }
 
   return criarLicencaEAbrirPagina(
