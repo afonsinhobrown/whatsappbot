@@ -144,6 +144,15 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       // Sem isto, o bot ficava a responder "mensagem enviada ao admin"
       // para sempre, sem o cliente conseguir voltar ao menu.
       //
+      // Uma saudação não é pedido de nada: um "bom dia" deixado no ar
+      // acordava o dono de madrugada sem haver nada para responder. O cliente
+      // continua no estado humano e a conversa real chega ao admin logo a
+      // seguir.
+      if (isSaudacao(text)) {
+        console.log(`[MSG] saudação ignorada de ${client.whatsapp_number} (estado humano)`);
+        return;
+      }
+      //
       // O encaminhamento ao admin não pode derrubar a mensagem do cliente: um
       // número inválido ou um token expirado fariam a excepção sair daqui e a
       // mensagem nunca chegava a lado nenhum.
