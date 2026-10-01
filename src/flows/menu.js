@@ -3,7 +3,7 @@ export const MENU = [
   "2 - Ver planos/preços",
   "3 - Pagar licença existente",
   "4 - Encomendar sistema/serviço novo",
-  "5 - Falar com humano",
+  "5 - Falar com administrador",
 ].join("\n");
 
 export function sendMenu(send, nome) {

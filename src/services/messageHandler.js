@@ -20,6 +20,11 @@ import {
   handlePagamentoMetodo,
 } from "../flows/pagamento.js";
 import { falarComHumano } from "../flows/humano.js";
+import {
+  isSaudacao,
+  responderSaudacao,
+  responderSaudacaoEmFluxo,
+} from "../flows/saudacao.js";
 import { adminNumbers } from "../config/env.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
@@ -61,7 +66,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     if (parts.length >= 3) {
       const targetPhone = parts[1];
       const replyText = parts.slice(2).join(" ");
-      await sendTextMessage(targetPhone, `👨‍💻 *Atendimento:* ${replyText}`, tenant);
+      await sendTextMessage(targetPhone, `👨‍💻 *Administrador:* ${replyText}`, tenant);
       
       try {
         const targetClient = await getClientByWhatsapp(tenant.id, targetPhone);
@@ -95,6 +100,23 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     return sendMenu(send, senderName);
   }
 
+  // Saudação a meio de um fluxo ("bom dia", "tudo bem"). Fica depois dos
+  // comandos globais para não mudar o que já acontecia com "oi"/"ola" exatos,
+  // e não toca no estado: o cliente ia a meio de uma cotação e deitá-la fora
+  // para lhe cumprimentar era pior do que a resposta trocada.
+  //
+  // O estado "humano" fica de fora de propósito: lá a mensagem do cliente é
+  // para o administrador, e responder "olá" por cima era tirar-lhe a
+  // atendimento que ele próprio tinha pedido.
+  if (
+    estado !== "inicio" &&
+    estado !== "menu" &&
+    estado !== "humano" &&
+    isSaudacao(text)
+  ) {
+    return responderSaudacaoEmFluxo(client, send);
+  }
+
   switch (estado) {
     case "cotacao_tipo":
       return handleCotacaoTipo(client, ctx, text, send);
@@ -117,7 +139,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     case "pagamento_metodo":
       return handlePagamentoMetodo(client, ctx, text, send);
     case "humano":
-      // Um cliente que pede atendimento humano mas depois escreve "menu"
+      // Um cliente que pede falar com administrador mas depois escreve "menu"
       // (ou qualquer comando global) já é tratado acima e sai do estado.
       // Sem isto, o bot ficava a responder "mensagem enviada ao admin"
       // para sempre, sem o cliente conseguir voltar ao menu.
@@ -152,8 +174,20 @@ function routeMenu(client, lower, send, tenant) {
   if (lower === "4" || lower.includes("encomend") || lower.includes("sistema")) {
     return startEncomenda(client, send);
   }
-  if (lower === "5" || lower.includes("humano") || lower.includes("atendente")) {
+  if (
+    lower === "5" ||
+    lower.includes("administrador") ||
+    lower.includes("admin") ||
+    lower.includes("humano") ||
+    lower.includes("atendente")
+  ) {
     return falarComHumano(client, send, tenant);
+  }
+  // "bom dia", "tudo bem", "e aí": o cliente está a dizer olá, não a
+  // escolher uma opção. Sem isto, respondia "Não entendi o seu pedido" a uma
+  // saudação — e era isso que o fez parecer um bot mudo.
+  if (isSaudacao(lower)) {
+    return responderSaudacao(client, send);
   }
   return send(`Não entendi o seu pedido. 🤔\n\nEscolha uma opção:\n${MENU}`);
 }

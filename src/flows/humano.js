@@ -7,7 +7,7 @@ import { adminNumbers } from "../config/env.js";
  */
 export async function falarComHumano(client, send, tenant) {
   await setSession(client.id, "humano", { desde: new Date().toISOString() });
-  console.log(`[ADMIN] ${client.whatsapp_number} pediu atendimento humano`);
+  console.log(`[ADMIN] ${client.whatsapp_number} pediu falar com administrador`);
 
   // O aviso ao dono é secundário. Se o número estiver errado, o token expirado
   // ou a Meta recusar, não pode ser a razão de o cliente ficar sem resposta:
@@ -22,7 +22,7 @@ export async function falarComHumano(client, send, tenant) {
     try {
       await sendTextMessage(
         numero,
-        `🚨 *Novo pedido de atendimento!* 🚨\nCliente: ${client.nome || "Desconhecido"}\nNúmero: ${client.whatsapp_number}\n\n_Para responder, escreva: !responder ${client.whatsapp_number} a sua mensagem_`,
+        `🚨 *Novo pedido — falar com administrador* 🚨\nCliente: ${client.nome || "Desconhecido"}\nNúmero: ${client.whatsapp_number}\n\n_Para responder, escreva: !responder ${client.whatsapp_number} a sua mensagem_`,
         tenant
       );
       console.log(`[ADMIN] pedido de ${client.whatsapp_number} avisado em ${numero}`);
@@ -33,7 +33,7 @@ export async function falarComHumano(client, send, tenant) {
 
   // A resposta ao cliente vem sempre, mesmo sem ninguém avisado.
   return send(
-    "👤 Pedido registado! Um agente vai responder em breve.\n\n" +
+    "👤 Pedido registado! Um administrador vai responder em breve.\n\n" +
       'Escreva "menu" para voltar às opções a qualquer momento.'
   );
 }

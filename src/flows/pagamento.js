@@ -144,7 +144,7 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
     );
     return send(
       `⚠️ Já existe um pedido de pagamento em aberto para *${descricao}*.\n\n` +
-        "Não vou gerar outro para não lhe cobrar duas vezes. Fale com um atendente " +
+        "Não vou gerar outro para não lhe cobrar duas vezes. Fale com um administrador " +
         'e resolvemos já — escreva "5".'
     );
   }
@@ -170,7 +170,7 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
 
     return send(
       `🧾 *${descricao}* — ${formatMoney(valor)}\n\n` +
-        "Não foi possível gerar a página de pagamento. Fale com um atendente:\n" +
+        "Não foi possível gerar a página de pagamento. Fale com um administrador:\n" +
         'Escreva "5" e resolvemos já.'
     );
   } catch (err) {
@@ -189,7 +189,7 @@ export async function abrirPaginaPagamento(client, pagamentoId, valor, descricao
     }
     return send(
       `⚠️ Não consegui abrir a página de pagamento: ${err.message}\n\n` +
-        "Fale com um atendente para resolver:\n" +
+        "Fale com um administrador para resolver:\n" +
         'Escreva "5".'
     );
   }
@@ -587,7 +587,7 @@ export async function showPagamento(client, send) {
       "Primeiro: em que *sistema* quer pagar?\n\n" +
       `${lista}\n\n` +
       "📖 = Trayemos o plano e o preço desse sistema.\n" +
-      "💬 = fale com um atendente (ainda sem preço no bot).\n\n" +
+      "💬 = fale com um administrador (ainda sem preço no bot).\n\n" +
       'Responda com o *número*. Escreva "0" para voltar.'
   );
 }
@@ -615,7 +615,7 @@ export async function handlePagamentoEscolherProduto(client, ctx, text, send) {
       async (t) =>
         send(
           `*${nome}* ainda não tem preço definido aqui no bot. ` +
-            "Vou passar-lhe a um atendente para tratar disso.\n\n" + t
+            "Vou passar-lhe a um administrador para tratar disso.\n\n" + t
         ),
       await getTenantById(client.tenant_id)
     );
@@ -678,7 +678,7 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
   } else if (!lic.ok) {
     cabecalho =
       "⚠️ Não consegui ler a sua licença no sistema neste momento.\n\n" +
-      "Se já renovou e o erro continuar, fale com um atendente.\n\n";
+      "Se já renovou e o erro continuar, fale com um administrador.\n\n";
   } else {
     const linhas = [`👤 *${lic.nome}*`];
     if (lic.plano) linhas.push(`📦 Plano actual: *${lic.plano}*`);
@@ -717,7 +717,7 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
     cabecalho += `💰 Renovação: ${formatMoney(planoCliente.preco)}/mês.\n\n`;
   }
   opcoes.push({ accao: "planos", rotulo: "Ver *planos* e preços" });
-  opcoes.push({ accao: "humano", rotulo: "Falar com um *atendente*" });
+  opcoes.push({ accao: "humano", rotulo: "Falar com um *administrador*" });
 
   await setSession(client.id, "pagamento_escolher_opcao", {
     ...ctx,
@@ -893,7 +893,7 @@ async function abrirPagamentoParaPlano(client, ctx, plano, send) {
   if (plano.slug === null && !plano.id) {
     console.warn(
       `[PAGAMENTO] plano "${plano.nome_plano}" de "${ctx.produto}" veio do catálogo do bot ` +
-        "sem slug do sistema; a activação pode precisar de um atendente"
+        "sem slug do sistema; a activação pode precisar de um administrador"
     );
   }
 
