@@ -1,6 +1,6 @@
 import { setSession } from "../services/sessionService.js";
 import { sendTextMessage } from "../services/metaApi.js";
-import { env } from "../config/env.js";
+import { adminNumbers } from "../config/env.js";
 
 /**
  * Opção 5 do menu — marca a sessão como aguardando humano e registra o pedido.
@@ -13,25 +13,22 @@ export async function falarComHumano(client, send, tenant) {
   // ou a Meta recusar, não pode ser a razão de o cliente ficar sem resposta:
   // sem este try/catch a excepção saía daqui e o "pedido registado" nunca
   // chegava ao cliente — que era exactamente o que acontecia.
-  const numeros = [process.env.ADMIN_WHATSAPP_NUMBER, ...env.adminNumbers].filter(
-    (n) => n && !/^\[|SENSITIVE/i.test(n)
-  );
-  const unicos = [...new Set(numeros.map((n) => String(n).replace(/\D/g, "")))].filter(Boolean);
+  const numeros = adminNumbers();
+  if (!numeros.length) {
+    console.error("[ADMIN] nenhum número configurado (ADMIN_WHATSAPP_NUMBER / ADMIN_NUMBERS)");
+  }
 
-  if (unicos.length) {
-    for (const numero of unicos) {
-      try {
-        await sendTextMessage(
-          numero,
-          `🚨 *Novo pedido de atendimento!* 🚨\nCliente: ${client.nome || "Desconhecido"}\nNúmero: ${client.whatsapp_number}\n\n_Para responder, escreva: !responder ${client.whatsapp_number} a sua mensagem_`,
-          tenant
-        );
-      } catch (err) {
-        console.error(`[ADMIN] não consegui avisar ${numero}: ${err.message}`);
-      }
+  for (const numero of numeros) {
+    try {
+      await sendTextMessage(
+        numero,
+        `🚨 *Novo pedido de atendimento!* 🚨\nCliente: ${client.nome || "Desconhecido"}\nNúmero: ${client.whatsapp_number}\n\n_Para responder, escreva: !responder ${client.whatsapp_number} a sua mensagem_`,
+        tenant
+      );
+      console.log(`[ADMIN] pedido de ${client.whatsapp_number} avisado em ${numero}`);
+    } catch (err) {
+      console.error(`[ADMIN] não consegui avisar ${numero}: ${err.message}`);
     }
-  } else {
-    console.error("[ADMIN] nenhum número de administrador configurado (ADMIN_WHATSAPP_NUMBER / ADMIN_NUMBERS)");
   }
 
   // A resposta ao cliente vem sempre, mesmo sem ninguém avisado.
