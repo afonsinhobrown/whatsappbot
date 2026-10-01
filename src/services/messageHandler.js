@@ -20,8 +20,26 @@ import {
   handlePagamentoMetodo,
 } from "../flows/pagamento.js";
 import { falarComHumano } from "../flows/humano.js";
+import { env } from "../config/env.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
+
+const somenteDigitos = (v) => String(v || "").replace(/\D/g, "");
+
+/**
+ * Números que recebem os avisos de atendimento humano.
+ *
+ * Junta as duas variáveis (ADMIN_WHATSAPP_NUMBER e ADMIN_NUMBERS) e descarta
+ * valores que não são números — como o placeholder "[SENSITIVE]". Sem esse
+ * filtro, o bot tentava enviar para um número inventado, a Meta devolvia erro
+ * 400 e o cliente ficava sem qualquer resposta.
+ */
+function adminPhones() {
+  const brutos = [process.env.ADMIN_WHATSAPP_NUMBER, ...(env.adminNumbers || [])];
+  return [...new Set(brutos.map(somenteDigitos))].filter(
+    (n) => n.length >= 9 && n.length <= 15
+  );
+}
 
 /**
  * Ponto de entrada para cada mensagem de texto recebida no webhook.
@@ -41,8 +59,10 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   console.log(`[MSG][tenant ${tenant ? tenant.id : "?"}] ${senderName || "cliente"} (${phone}): "${text}"`);
 
   // Se a mensagem vier do administrador e for um comando de resposta (!responder numero mensagem)
-  const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER || "";
-  if (phone === adminPhone && text.toLowerCase().startsWith("!responder")) {
+  // A comparação é feita só com dígitos: o número chega da Meta como "2588..." e
+  // a variável de ambiente pode estar guardada com +, espaços ou o país, e a
+  // comparação literal nunca batia.
+  if (adminPhones().includes(somenteDigitos(phone)) && text.toLowerCase().startsWith("!responder")) {
     const parts = text.split(" ");
     if (parts.length >= 3) {
       const targetPhone = parts[1];
@@ -107,8 +127,16 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       // (ou qualquer comando global) já é tratado acima e sai do estado.
       // Sem isto, o bot ficava a responder "mensagem enviada ao admin"
       // para sempre, sem o cliente conseguir voltar ao menu.
-      if (adminPhone) {
-        await sendTextMessage(adminPhone, `📩 *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
+      //
+      // O encaminhamento ao admin não pode derrubar a mensagem do cliente: um
+      // número inválido ou um token expirado fariam a excepção sair daqui e a
+      // mensagem nunca chegava a lado nenhum.
+      for (const numero of adminPhones()) {
+        try {
+          await sendTextMessage(numero, `📩 *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
+        } catch (err) {
+          console.error(`[ADMIN] não consegui entregar a mensagem em ${numero}: ${err.message}`);
+        }
       }
       return; // não envia feedback automático ao cliente
     case "menu":

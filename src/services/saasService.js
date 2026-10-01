@@ -141,10 +141,25 @@ export async function ativarLicenca(produtoNome, username, meses = 1, slugPlano 
     switch (sistema) {
       case "GYMAR":
         // Atualizar mensalidade do atleta na tabela clients (Gymar)
-        userRes = await queryDual("GYMAR", 'SELECT id FROM clients WHERE name ILIKE $1 OR id::text = $1', [username]);
+        userRes = await queryDual("GYMAR", "SELECT id FROM clients WHERE name ILIKE $1 OR id::text = $1", [username]);
         if (userRes.rows.length > 0) {
           const atletaId = userRes.rows[0].id;
-          await queryDual("GYMAR", "UPDATE clients SET status = 'ativo', end_date = GREATEST(end_date, CURRENT_TIMESTAMP) + interval '1 month' * $1 WHERE id = $2", [meses, atletaId]);
+          // 'active' e não 'ativo': é o valor que a base do Gymar usa em todos
+          // os clientes. Com 'ativo' o atleta pagava, o status ficava com um
+          // valor que a leitura nunca reconhecia, e voltava a aparecer expirado.
+          // end_date é NULL em toda a base, por isso o GREATEST ficava NULL e
+          // a validade continuava a não aparecer: passa a contar de hoje.
+          const res = await queryDual(
+            "GYMAR",
+            "UPDATE clients SET status = 'active', " +
+              "end_date = COALESCE(end_date, CURRENT_DATE) + interval '1 month' * $1 " +
+              "WHERE id = $2",
+            [meses, atletaId]
+          );
+          if (res.rowCount === 0) {
+            console.error(`[SAAS] Gymar: o atleta ${atletaId} (${username}) não foi actualizado`);
+            return false;
+          }
           return true;
         }
         break;
@@ -379,10 +394,17 @@ const CONSULTA_LICENCA = {
     return rows[0] || {};
   },
   GYMAR: async (conta) => {
+    // O Gymar não preenche end_date: é NULL em todos os clientes. O que diz se
+    // a mensalidade está a correr é o status (active/inactive) e o plano vem da
+    // coluna plan_name do próprio cliente — o join a plans só por plan_id
+    // deixava o plano a null sempre que esse campo não estava preenchido.
     const { rows } = await consultar(
       "GYMAR",
-      "SELECT c.status, c.end_date, p.name AS plano_nome, p.price::numeric * 1.16 AS monthly_price FROM clients c " +
-        "LEFT JOIN plans p ON p.id = c.plan_id WHERE c.id = $1",
+      "SELECT c.status, c.end_date, c.start_date, c.last_payment, " +
+        "COALESCE(p.name, c.plan_name) AS plano_nome, " +
+        "p.price::numeric * 1.16 AS monthly_price, " +
+        "c.plan_name, p.id AS plano_id " +
+        "FROM clients c LEFT JOIN plans p ON p.id = c.plan_id WHERE c.id = $1",
       [conta.id]
     );
     return rows[0] || {};
@@ -473,7 +495,7 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
   const validade =
     lic.validUntil || lic.endDate || lic.data_fim || lic.trial_ends_at || u.trial_ends_at || null;
   const estadoBruto = lic.status || lic.estado || null;
-  const estado =
+  let estado =
     estadoBruto !== null && estadoBruto !== undefined
       ? String(estadoBruto).toLowerCase()
       : typeof lic.is_ativa === "boolean"
@@ -481,6 +503,8 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
           ? "active"
           : "inactive"
         : null;
+  // Gymar usa "inactive" para quem não está activo (expirado/cancelado)
+  if (estado === "inactive" && sistema === "GYMAR") estado = "expired";
 
   // No Gymar o preço é o plano do atleta + 16% de IVA, lido da própria base
   // de dados. Nos outros sistemas o preço vem do catálogo de planos.
@@ -499,7 +523,11 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
   // está activa. No GestorFarma havia farmácias com is_ativa=true e data_fim
   // já passada — o bot dizia ao cliente que a licença estava activa. Numa bot
   // que vende renovações, esse é o erro mais caro que há.
-  const expirada = dias !== null && dias < 0;
+  //
+  // Quando o sistema não tem data de fim (o Gymar deixa end_date a NULL e só
+  // marca active/inactive), o status é o que decide: sem esta parte o cliente
+  // via "válido até —" e nunca soube se o plano estava a correr.
+  const expirada = dias !== null ? dias < 0 : estado === "expired";
 
   return {
     ok: true,
@@ -508,7 +536,7 @@ export async function consultarLicencaSaaS(produtoNome, identificador) {
     nome: u.name || u.company_name || identificador,
     identificador,
     plano,
-    planoSlug: planoPorPreco ? planoPorPreco.slug : u.plan || null,
+    planoSlug: planoPorPreco ? planoPorPreco.slug : u.plan || lic.plan_name || null,
     validade: validade ? new Date(validade).toISOString() : null,
     dias,
     estado: expirada ? "expired" : estado,

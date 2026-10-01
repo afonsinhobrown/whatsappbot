@@ -682,7 +682,14 @@ async function mostrarOpcoesLicenca(client, ctx, send) {
   } else {
     const linhas = [`👤 *${lic.nome}*`];
     if (lic.plano) linhas.push(`📦 Plano actual: *${lic.plano}*`);
-    linhas.push(`📅 Válido até *${dataCurta(lic.validade)}*${diasTexto(lic.dias)}`);
+    // Alguns sistemas (Gymar) não guardam data de fim: só dizem se a conta
+    // está activa. "Válido até sem data" parecia um erro do bot, por isso se
+    // diz o que a base de dados sabe de facto.
+    linhas.push(
+      lic.validade
+        ? `📅 Válido até *${dataCurta(lic.validade)}*${diasTexto(lic.dias)}`
+        : `📅 A sua mensalidade está *activa* — o sistema não guarda data de fim.`
+    );
     if (lic.expirada) {
       cabecalho =
         `⚠️ *Licença expirada em ${rotuloSistema(ctx.produto)}*\n\n` +
