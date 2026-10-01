@@ -35,14 +35,8 @@ export const env = {
  * nenhuma. Todos os números ficam em formato só com dígitos, com o 258 dos
  * números moçambicanos de 9 dígitos.
  */
-// Número do dono, para o bot nunca ficar calado se a variável de ambiente
-// estiver errada ou em falta. TEMPORÁRIO: está também em ADMIN_WHATSAPP_NUMBER.
-// While o valor errado na variável, os pedidos de atendimento iam para outro
-// número e o dono nunca os recebia.
-const NUMERO_DONO = "258877981166";
-
 export function adminNumbers() {
-  const brutos = [NUMERO_DONO, process.env.ADMIN_WHATSAPP_NUMBER, ...(env.adminNumbers || [])];
+  const brutos = [process.env.ADMIN_WHATSAPP_NUMBER, ...(env.adminNumbers || [])];
   const vistos = new Set();
   for (const bruto of brutos) {
     let n = String(bruto || "").replace(/\D/g, "");
