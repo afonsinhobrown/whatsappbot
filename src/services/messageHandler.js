@@ -47,7 +47,16 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   // A comparação é feita só com dígitos: o número chega da Meta como "2588..." e
   // a variável de ambiente pode estar guardada com +, espaços ou o país, e a
   // comparação literal nunca batia.
-  if (adminNumbers().includes(somenteDigitos(phone)) && text.toLowerCase().startsWith("!responder")) {
+  //
+  // Este teste fica dentro de um try/catch: corria antes de qualquer protecção,
+  // e uma falha aqui impedia o bot de responder a QUALQUER cliente.
+  let numerosAdmin = [];
+  try {
+    numerosAdmin = adminNumbers();
+  } catch (err) {
+    console.error("[ADMIN] não consegui ler os números de admin:", err.message);
+  }
+  if (numerosAdmin.includes(somenteDigitos(phone)) && text.toLowerCase().startsWith("!responder")) {
     const parts = text.split(" ");
     if (parts.length >= 3) {
       const targetPhone = parts[1];
@@ -116,7 +125,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       // O encaminhamento ao admin não pode derrubar a mensagem do cliente: um
       // número inválido ou um token expirado fariam a excepção sair daqui e a
       // mensagem nunca chegava a lado nenhum.
-      for (const numero of adminNumbers()) {
+      for (const numero of numerosAdmin) {
         try {
           await sendTextMessage(numero, `📩 *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
         } catch (err) {
