@@ -83,6 +83,15 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     }
   }
 
+  // O dono também é cliente do bot, por isso escreve "bom dia" de vez em
+  // quando para testar. Sem isto, o bot tratava o próprio dono como cliente e
+  //-lhe mandava a saudação e o menu — ele já sabe quem é, a mensagem só
+  // barrava o ecrã. Silêncio é o que se pede aqui.
+  if (numerosAdmin.includes(somenteDigitos(phone)) && isSaudacao(text)) {
+    console.log(`[MSG] saudação do próprio dono (${phone}) — sem resposta`);
+    return;
+  }
+
   const send = (reply) => sendTextMessage(phone, reply, tenant);
   const lower = text.toLowerCase();
 
@@ -102,8 +111,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
 
   // Saudação a meio de um fluxo ("bom dia", "tudo bem"). Fica depois dos
   // comandos globais para não mudar o que já acontecia com "oi"/"ola" exatos,
-  // e não toca no estado: o cliente ia a meio de uma cotação e deitá-la fora
-  // para lhe cumprimentar era pior do que a resposta trocada.
+  // e não toca no estado: o cliente ia a meio de uma cotação e deitá-la fora  // para lhe cumprimentar era pior do que a resposta trocada.
   //
   // O estado "humano" fica de fora de propósito: lá a mensagem do cliente é
   // para o administrador, e responder "olá" por cima era tirar-lhe a
