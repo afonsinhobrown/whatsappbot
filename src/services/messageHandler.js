@@ -28,6 +28,7 @@ import {
   responderSaudacao,
   responderSaudacaoEmFluxo,
 } from "../flows/saudacao.js";
+import { sendDashboardReport } from "../flows/dashboard.js";
 import { adminNumbers } from "../config/env.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
@@ -64,8 +65,14 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   } catch (err) {
     console.error("[ADMIN] não consegui ler os números de admin:", err.message);
   }
-  if (numerosAdmin.includes(somenteDigitos(phone)) && text.toLowerCase().startsWith("!responder")) {
-    const parts = text.split(" ");
+  if (numerosAdmin.includes(somenteDigitos(phone))) {
+    if (text.toLowerCase() === "!dashboard") {
+      const sendFn = (reply) => sendTextMessage(phone, reply, tenant);
+      return sendDashboardReport(sendFn, tenant);
+    }
+    
+    if (text.toLowerCase().startsWith("!responder")) {
+      const parts = text.split(" ");
     if (parts.length >= 3) {
       const targetPhone = parts[1];
       const replyText = parts.slice(2).join(" ");
