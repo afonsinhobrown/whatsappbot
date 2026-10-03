@@ -62,7 +62,7 @@ router.post("/", limiter, async (req, res) => {
         const value = change.value || {};
         const message = value.messages && value.messages[0];
 
-        if (message && message.type === "text") {
+        if (message && ["text", "audio", "image"].includes(message.type)) {
           const phoneNumberId = value.metadata && value.metadata.phone_number_id;
           const tenant = await getTenantByPhoneNumberId(phoneNumberId);
           if (!tenant) {

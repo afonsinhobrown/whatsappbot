@@ -1,4 +1,5 @@
 import { env, isMetaConfigured } from "../config/env.js";
+import { Buffer } from "node:buffer";
 
 const GRAPH_API_VERSION = "v20.0";
 
