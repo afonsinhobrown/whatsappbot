@@ -48,7 +48,7 @@ app.get("/cron/cobranca", async (req, res, next) => {
     // Vercel adiciona este header se o pedido vier do Cron Job deles.
     // Em produção, ajuda a proteger contra abusos (embora seja GET sem side-effects graves repetitivos)
     const authHeader = req.headers.authorization;
-    if (process.env.VERCEL_ENV === "production" && authHeader !== \`Bearer \${process.env.CRON_SECRET}\`) {
+    if (process.env.VERCEL_ENV === "production" && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const resultado = await processarCobrancasDiarias();
