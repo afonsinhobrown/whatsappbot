@@ -21,6 +21,7 @@ export function sendMenu(send, nome, isAdmin = false) {
     `${saudacao} Sou o assistente da TECNOINCUBADORA. 🙂\n\n` +
       "Escolha uma opção:\n" +
       menuStr +
+      '\n\n💡 _Dica: Podes enviar uma *Nota de Voz* ou uma *Fotografia* a qualquer momento e eu consigo entender!_' +
       '\n\n(escreva "0" para voltar ao menu)'
   );
 }
