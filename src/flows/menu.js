@@ -4,6 +4,7 @@ export const MENU = [
   "3 - Pagar licença existente",
   "4 - Encomendar sistema/serviço novo",
   "5 - Falar com administrador",
+  "6 - 📅 Agendar Demonstração / Qualificação",
 ].join("\n");
 
 export function sendMenu(send, nome) {

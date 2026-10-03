@@ -22,6 +22,7 @@ import {
   handlePagamentoMetodo,
 } from "../flows/pagamento.js";
 import { falarComHumano } from "../flows/humano.js";
+import { startSDR, handleSDR } from "../flows/sdr.js";
 import {
   isSaudacao,
   responderSaudacao,
@@ -128,6 +129,8 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   }
 
   switch (estado) {
+    case "sdr_qualificacao":
+      return handleSDR(client, ctx, text, send, tenant);
     case "cotacao_tipo":
       return handleCotacaoTipo(client, ctx, text, send);
     case "cotacao_produto_lista":
@@ -201,6 +204,9 @@ function routeMenu(client, lower, send, tenant) {
     lower.includes("atendente")
   ) {
     return falarComHumano(client, send, tenant);
+  }
+  if (lower === "6" || lower.includes("demonstração") || lower.includes("demonstracao") || lower.includes("agendar") || lower.includes("qualificacao")) {
+    return startSDR(client, send, tenant);
   }
   // "bom dia", "tudo bem", "e aí": o cliente está a dizer olá, não a
   // escolher uma opção. Sem isto, respondia "Não entendi o seu pedido" a uma
