@@ -65,7 +65,10 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   } catch (err) {
     console.error("[ADMIN] não consegui ler os números de admin:", err.message);
   }
-  if (numerosAdmin.includes(somenteDigitos(phone))) {
+  
+  const isAdmin = numerosAdmin.includes(somenteDigitos(phone));
+
+  if (isAdmin) {
     if (text.toLowerCase() === "!dashboard") {
       const sendFn = (reply) => sendTextMessage(phone, reply, tenant);
       return sendDashboardReport(sendFn, tenant);
@@ -98,7 +101,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   // quando para testar. Sem isto, o bot tratava o próprio dono como cliente e
   //-lhe mandava a saudação e o menu — ele já sabe quem é, a mensagem só
   // barrava o ecrã. Silêncio é o que se pede aqui.
-  if (numerosAdmin.includes(somenteDigitos(phone)) && isSaudacao(text)) {
+  if (isAdmin && isSaudacao(text)) {
     console.log(`[MSG] saudação do próprio dono (${phone}) — sem resposta`);
     return;
   }
@@ -117,7 +120,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   // Comandos globais: voltar ao menu / cancelar
   if (COMANDOS_MENU.includes(lower)) {
     await setSession(client.id, "menu", {});
-    return sendMenu(send, senderName);
+    return sendMenu(send, senderName, isAdmin);
   }
 
   // Saudação a meio de um fluxo ("bom dia", "tudo bem"). Fica depois dos
@@ -187,11 +190,11 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return; // não envia feedback automático ao cliente
     case "menu":
     default:
-      return routeMenu(client, lower, send, tenant);
+      return routeMenu(client, lower, send, tenant, isAdmin);
   }
 }
 
-function routeMenu(client, lower, send, tenant) {
+function routeMenu(client, lower, send, tenant, isAdmin = false) {
   if (lower === "1" || lower.includes("cotação") || lower.includes("cotacao")) {
     return startCotacao(client, send);
   }
@@ -227,5 +230,5 @@ function routeMenu(client, lower, send, tenant) {
   if (isAiEnabled()) {
     return handleAiMessage(client, lower, send, tenant);
   }
-  return send(`Não entendi o seu pedido. 🤔\n\nEscolha uma opção:\n${MENU}`);
+  return sendMenu(send, client.nome, isAdmin);
 }

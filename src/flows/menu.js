@@ -7,12 +7,20 @@ export const MENU = [
   "6 - 📅 Agendar Demonstração / Qualificação",
 ].join("\n");
 
-export function sendMenu(send, nome) {
+export function sendMenu(send, nome, isAdmin = false) {
   const saudacao = nome ? `Olá ${nome}!` : "Olá!";
+  
+  let menuStr = MENU;
+  if (isAdmin) {
+    menuStr += "\n\n🛠️ *Comandos Privados (Apenas Admin):*\n";
+    menuStr += "• *!dashboard* - Relatório IA de Gestão\n";
+    menuStr += "• *!responder [número] [msg]* - Chat manual com cliente";
+  }
+
   return send(
     `${saudacao} Sou o assistente da TECNOINCUBADORA. 🙂\n\n` +
       "Escolha uma opção:\n" +
-      MENU +
+      menuStr +
       '\n\n(escreva "0" para voltar ao menu)'
   );
 }
