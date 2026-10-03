@@ -1,4 +1,6 @@
 import { sendTextMessage } from "./metaApi.js";
+import { isAiEnabled } from "./aiService.js";
+import { handleAiMessage } from "../flows/aiChat.js";
 import { getClientByWhatsapp, touchClient, setClientName } from "./dbService.js";
 import { getSession, setSession } from "./sessionService.js";
 import { MENU, sendMenu } from "../flows/menu.js";
@@ -205,6 +207,11 @@ function routeMenu(client, lower, send, tenant) {
   // saudação — e era isso que o fez parecer um bot mudo.
   if (isSaudacao(lower)) {
     return responderSaudacao(client, send);
+  }
+  // Fallback inteligente: se a IA estiver activa, responde com GPT em vez
+  // de "Não entendi". Se não estiver configurada, comportamento anterior.
+  if (isAiEnabled()) {
+    return handleAiMessage(client, lower, send, tenant);
   }
   return send(`Não entendi o seu pedido. 🤔\n\nEscolha uma opção:\n${MENU}`);
 }

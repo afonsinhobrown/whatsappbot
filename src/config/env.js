@@ -23,6 +23,9 @@ export const env = {
     .filter(Boolean),
   // Segredo do webhook da PaySuite (definições > API Access no painel).
   paysuiteWebhookSecret: process.env.PAYSUITE_WEBHOOK_SECRET || "",
+  // OpenAI — motor de IA. Sem esta variável a plataforma AI fica desactivada
+  // e o bot continua a funcionar exactamente como antes.
+  openaiApiKey: process.env.OPENAI_API_KEY || "",
 };
 
 /**
