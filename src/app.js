@@ -4,6 +4,7 @@ import webhookRouter from "./routes/webhook.js";
 import adminRouter from "./routes/admin.js";
 import { adminHtml } from "./admin/ui.js";
 import { privacyHtml, dataDeletionHtml } from "./legal.js";
+import { processarCobrancasDiarias } from "./cron/cobranca.js";
 
 const app = express();
 
@@ -40,6 +41,22 @@ app.get("/data-deletion", (_req, res) => {
 
 app.use("/admin/api", adminRouter);
 app.use("/webhook", webhookRouter);
+
+// Endpoint chamado pelo Vercel Cron
+app.get("/cron/cobranca", async (req, res, next) => {
+  try {
+    // Vercel adiciona este header se o pedido vier do Cron Job deles.
+    // Em produção, ajuda a proteger contra abusos (embora seja GET sem side-effects graves repetitivos)
+    const authHeader = req.headers.authorization;
+    if (process.env.VERCEL_ENV === "production" && authHeader !== \`Bearer \${process.env.CRON_SECRET}\`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const resultado = await processarCobrancasDiarias();
+    res.json(resultado);
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.use((err, _req, res, _next) => {
   console.error("[ERRO]", err);
