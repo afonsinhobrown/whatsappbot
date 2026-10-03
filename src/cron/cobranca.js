@@ -50,21 +50,21 @@ export async function processarCobrancasDiarias() {
       );
 
       if (pagamentosPendentes.length > 0) {
-        console.log(\`[CRON] Cliente \${licenca.cliente_nome} já tem pagamento pendente. Ignorar.\`);
+        console.log(`[CRON] Cliente ${licenca.cliente_nome} já tem pagamento pendente. Ignorar.`);
         continue;
       }
 
       // 2. Gerar link de pagamento na PaySuite
       const baseUrl = env.publicUrl || "https://tecnoincubadora-admin-bots.vercel.app";
       const payment = await createPaySuiteCharge(licenca.preco, licenca.licenca_id, {
-        description: \`Renovação de \${licenca.nome_plano}\`,
-        webhookUrl: \`\${baseUrl}/api/paysuite/webhook\`,
+        description: `Renovação de ${licenca.nome_plano}`,
+        webhookUrl: `${baseUrl}/api/paysuite/webhook`,
       });
 
       // Guardar pagamento na BD
       await query(
-        \`INSERT INTO pagamentos (cliente_id, referencia_tipo, referencia_id, valor, moeda, status, paysuite_id, paysuite_checkout_url, tenant_id)
-         VALUES ($1, 'licenca', $2, $3, $4, 'pending', $5, $6, $7)\`,
+        `INSERT INTO pagamentos (cliente_id, referencia_tipo, referencia_id, valor, moeda, status, paysuite_id, paysuite_checkout_url, tenant_id)
+         VALUES ($1, 'licenca', $2, $3, $4, 'pending', $5, $6, $7)`,
         [
           licenca.cliente_id,
           licenca.licenca_id,
@@ -77,10 +77,10 @@ export async function processarCobrancasDiarias() {
       );
 
       // 3. Formular mensagem com o Gemini
-      const prompt = \`
-Escreve uma mensagem de WhatsApp muito simpática, curta e direta para o cliente "\${licenca.cliente_nome}".
-Informa-o que a sua licença do sistema "\${licenca.nome_plano}" expira (ou expirou) por volta do dia \${new Date(licenca.data_expiracao).toLocaleDateString('pt-MZ')}.
-O valor da renovação é \${licenca.preco} \${licenca.moeda || 'MZN'}.
+      const prompt = `
+Escreve uma mensagem de WhatsApp muito simpática, curta e direta para o cliente "${licenca.cliente_nome}".
+Informa-o que a sua licença do sistema "${licenca.nome_plano}" expira (ou expirou) por volta do dia ${new Date(licenca.data_expiracao).toLocaleDateString('pt-MZ')}.
+O valor da renovação é ${licenca.preco} ${licenca.moeda || 'MZN'}.
 Avisa que pode pagar facilmente por M-Pesa ou e-Mola clicando no link abaixo.
 
 Regras:
@@ -89,20 +89,20 @@ Regras:
 - Usa 1 ou 2 emojis adequados
 - Não inventes links, porque o sistema vai juntar o link real no fim da tua mensagem.
 
-Termina a tua mensagem sem acrescentar o link (o sistema fará isso).\`;
+Termina a tua mensagem sem acrescentar o link (o sistema fará isso).`;
 
       const aiMessage = await askAI(prompt, [], { nome: licenca.tenant_nome });
       
-      const mensagemFinal = \`\${aiMessage}\n\n🔗 *Link para pagar por M-Pesa/e-Mola:*\n\${payment.checkoutUrl}\`;
+      const mensagemFinal = `${aiMessage}\n\n🔗 *Link para pagar por M-Pesa/e-Mola:*\n${payment.checkoutUrl}`;
 
       // 4. Enviar mensagem
       await sendTextMessage(licenca.whatsapp_number, mensagemFinal, { id: licenca.tenant_id });
       
       cobradas++;
-      console.log(\`[CRON] Cobrança enviada com sucesso para \${licenca.cliente_nome} (\${licenca.whatsapp_number})\`);
+      console.log(`[CRON] Cobrança enviada com sucesso para ${licenca.cliente_nome} (${licenca.whatsapp_number})`);
       
     } catch (err) {
-      console.error(\`[CRON] Erro ao processar cobrança da licença \${licenca.licenca_id}:\`, err.message);
+      console.error(`[CRON] Erro ao processar cobrança da licença ${licenca.licenca_id}:`, err.message);
     }
   }
 

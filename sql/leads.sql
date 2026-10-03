@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS leads (
+aCREATE TABLE IF NOT EXISTS leads (
   id SERIAL PRIMARY KEY,
   cliente_id INTEGER REFERENCES clientes(id),
   tenant_id INTEGER REFERENCES tenants(id),

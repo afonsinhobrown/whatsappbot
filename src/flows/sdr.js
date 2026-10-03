@@ -11,7 +11,7 @@ const MAX_SDR_TURNS = 6; // Limite de trocas para não cansar o lead
 export async function startSDR(client, send, tenant) {
   await setSession(client.id, "sdr_qualificacao", { sdr_history: [] });
   
-  const mensagemInicial = \`Olá, \${client.nome || "amigo"}! 👋\n\nVejo que tens interesse nos nossos sistemas. Para te recomendar a melhor solução, posso fazer-te umas 3 perguntinhas rápidas?\`;
+  const mensagemInicial = `Olá, ${client.nome || "amigo"}! 👋\n\nVejo que tens interesse nos nossos sistemas. Para te recomendar a melhor solução, posso fazer-te umas 3 perguntinhas rápidas?`;
   return send(mensagemInicial);
 }
 
@@ -25,7 +25,7 @@ export async function handleSDR(client, ctx, text, send, tenant) {
   history.push({ role: "user", content: text });
   
   // Prompt de sistema específico para o SDR
-  const sdrPrompt = \`És um SDR (Sales Development Representative) especialista em vendas B2B da \${tenant.nome || "TecnoIncubadora"}.
+  const sdrPrompt = `És um SDR (Sales Development Representative) especialista em vendas B2B da ${tenant.nome || "TecnoIncubadora"}.
 O teu objetivo é fazer perguntas para descobrir:
 1. Qual é o ramo de negócio do cliente?
 2. Qual é a sua maior dor ou problema atual com a gestão?
@@ -35,7 +35,7 @@ REGRAS CRÍTICAS:
 - Faz APENAS UMA pergunta de cada vez.
 - Sê muito empático e coloquial.
 - Se já tiveres respostas suficientes (ramo de negócio, problema, tamanho da equipa), encerra dizendo "Excelente, já tenho o que preciso. Vou passar estes dados à nossa equipa para agendar uma demonstração contigo. Obrigado!". E USA EXACTAMENTE A PALAVRA "SDR_QUALIFICADO" algures na tua mensagem final (importante para eu saber que terminaste).
-- Se o cliente for rude ou disser que não quer responder, responde pedindo desculpa e encerra dizendo "SDR_QUALIFICADO".\`;
+- Se o cliente for rude ou disser que não quer responder, responde pedindo desculpa e encerra dizendo "SDR_QUALIFICADO".`;
 
   try {
     // Pedir à IA a próxima resposta
@@ -69,7 +69,7 @@ REGRAS CRÍTICAS:
       }
       
       // Avisar administrador
-      await sendTextMessage(process.env.ADMIN_WHATSAPP_NUMBER || "", \`🚨 *Novo Lead Qualificado!*\n\n*Cliente:* \${client.nome} (\${client.whatsapp_number})\n*Resumo:* \${necessidade}\n\nUsa o comando !responder para lhe falar.\`, tenant).catch(() => {});
+      await sendTextMessage(process.env.ADMIN_WHATSAPP_NUMBER || "", `🚨 *Novo Lead Qualificado!*\n\n*Cliente:* ${client.nome} (${client.whatsapp_number})\n*Resumo:* ${necessidade}\n\nUsa o comando !responder para lhe falar.`, tenant).catch(() => {});
       
       // Tirar do estado SDR
       await setSession(client.id, "menu", {});
