@@ -168,6 +168,6 @@ export async function analyzeMedia(mediaData, prompt, tenant = null) {
     return result.response.text().trim();
   } catch (err) {
     console.error("[IA] Falha ao analisar media:", err);
-    return "Desculpa, não consegui processar esse ficheiro no momento.";
+    return "Estamos com muitos pedidos agora. Tente mais tarde ou escreva *menu* e digite a opção relacionada com o teu pedido/assunto.";
   }
 }
