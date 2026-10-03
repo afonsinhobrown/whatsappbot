@@ -61,7 +61,7 @@ REGRAS:
 export async function askAI(userMessage, history = [], tenant = null) {
   const genAI = getClient();
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",   // gratuito, rápido, excelente para WhatsApp
+    model: "gemini-3.5-flash",
     systemInstruction: buildSystemPrompt(tenant),
   });
 
@@ -85,7 +85,7 @@ export async function askAI(userMessage, history = [], tenant = null) {
 export async function classifyIntent(message) {
   const genAI = getClient();
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-3.5-flash",
     generationConfig: { responseMimeType: "application/json" },
   });
 
@@ -113,7 +113,7 @@ Mensagem: "${message}"`;
 export async function extractDocumentData(text, type = "fatura") {
   const genAI = getClient();
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-3.5-flash",
     generationConfig: { responseMimeType: "application/json" },
   });
 

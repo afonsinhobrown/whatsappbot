@@ -134,51 +134,124 @@ Quando tiveres o URL público, na Meta:
 
 ## ☁️ Deploy (Vercel) — JÁ ESTÁ NO AR!
 
-O bot já está hospedado no Vercel:
+**Projeto:** `afonsos-projects-e7645dac/tecnoincubadora-admin-bots`
+**URL público:** `https://tecnoincubadora-admin-bots.vercel.app`
+**Webhook:** `https://tecnoincubadora-admin-bots.vercel.app/webhook`
 
-**URL público:** `https://whatsappbot-gold.vercel.app`
-**Webhook:** `https://whatsappbot-gold.vercel.app/webhook`
+### 🔑 Relatório: token permanente do WhatsApp (CONCLUÍDO em 2026-10-03)
 
-### Variáveis já configuradas no Vercel
+O bot já **não depende mais de token temporário**. Este é o registo do que foi feito.
 
-| Variável | Estado |
-|---|---|
-| `VERIFY_TOKEN` | ✅ `IuAZjHEDzxNsL7GckVgq9aJK` |
-| `WHATSAPP_TOKEN` | ✅ token real da app `wassppbot` (temporário — ver abaixo) |
-| `PHONE_NUMBER_ID` | ✅ `1336702446191164` |
+#### Antes vs. agora
 
-### 🔁 O token expira — cria um PERMANENTE (faz uma única vez!)
+| | Antes | Agora |
+|---|---|---|
+| Tipo de token | Temporário (24 h) | **System User (permanente)** |
+| Origem | App Dashboard → API Setup | Business Settings → System Users |
+| Falhava com | `OAuthException 190` a cada 24 h | Não expira |
 
-O token temporário da Meta dura **24 horas**. Para nunca mais repetires, cria um **token permanente**:
+#### Como foi gerado
 
-1. Abre `https://business.facebook.com/settings/system-users`
-2. **Add** → nome `whatsappbot-bot` → função **Admin** → **Add user**
-3. No utilizador criado → **Assign assets** → **Apps** → liga a app `wassppbot`
-4. Volta ao utilizador → **Generate new token**
-5. Marca as permissões:
+1. `https://business.facebook.com/settings/system-users`
+2. **+ Add** → nome `whatsappbot-bot` → papel **Admin** → **Create System User**
+3. **Assign Assets** → app com **Manage app** (Full control) + conta WhatsApp com
+   **Manage WhatsApp Business accounts** (Full control)
+4. **Generate token** com as permissões:
+   - `business_management`
    - `whatsapp_business_messaging`
    - `whatsapp_business_management`
-6. **Generate Token** → copia (é para sempre)
 
-Depois atualiza no Vercel:
+#### Onde o token foi instalado (3 camadas)
+
+| # | Destino | Detalhe |
+|---|---|---|
+| 1 | **`tenants.token`** (Postgres) | `tenants.id = 1` / `TECNOINCUBADORA` — **é esta camada que envia** |
+| 2 | `.env.local` | ficheiro local, coberto pelo `.gitignore` |
+| 3 | Vercel `WHATSAPP_TOKEN` | Secret, ambiente Production |
+
+> O valor do token **nunca** deve ser escrito neste ficheiro, commitado ou colado em
+> issue/chat. Está guardado apenas nos 3 destinos acima.
+
+#### Ordem de resolução (o que o código faz)
+
+`src/services/metaApi.js:12`
+
+```js
+const token = (tenant && tenant.token) || env.whatsappToken;
+```
+
+O token do **tenant na base de dados ganha**; `WHATSAPP_TOKEN` é apenas *fallback*.
+O tenant é resolvido a partir do `phone_number_id` que vem no webhook
+(`src/routes/webhook.js:66` → `src/services/dbService.js:79`
+`getTenantByPhoneNumberId`).
+
+Se a tabela `tenants.token` estiver vazia, o bot degrada para MOCK
+(`src/services/metaApi.js:15`) e os envios são apenas simulados.
+
+#### Identificadores da conta WhatsApp
+
+| Campo | Valor |
+|---|---|
+| `phone_number_id` | `1349279428267688` |
+| `waba_id` | `1050705194450386` |
+| Número | `+258 86 139 0985` |
+| Nome verificado | `TECNO_BOT` |
+| Base de dados | Neon `ep-old-mountain-b5yvr8av` (us-east-2), db `bots` |
+
+#### Validação feita
 
 ```bash
-vercel env add WHATSAPP_TOKEN production   # cola o token permanente
-vercel deploy --prod --yes                 # refaz o deploy
+curl -s "https://graph.facebook.com/v23.0/1349279428267688?fields=display_phone_number,verified_name" \
+  -H "Authorization: Bearer $WHATSAPP_TOKEN"
+# -> {"display_phone_number":"+258 86 139 0985","verified_name":"TECNO_BOT",...}
 ```
+
+Redeploy: `vercel redeploy <url-do-deploy-anterior> --target=production`
+→ `vepusyhwt`, Ready em 14 s, com alias em `tecnoincubadora-admin-bots.vercel.app`.
+
+> ⚠️ Erro cometido durante a configuração, para não se repetir: o token foi
+> transcrito de mão com um caractere trocado (`U` por `Y` em `...VsuUYmY5ug6...`).
+> O Symptoms foi `OAuthException 190 — "The access token could not be decrypted"`.
+> Se aparecer esse erro, **não é o token da Meta**: é transcrição. Copia/cola sempre.
 
 ### Como alterar variáveis e refazer o deploy
 
 ```bash
-vercel env add WHATSAPP_TOKEN production   # copia/cola
-vercel env add PHONE_NUMBER_ID production  # se mudar
-vercel deploy --prod --yes                 # refaz o deploy
+# Mudar um valor já existente (o `vercel env add` duplica, tem de remover antes)
+vercel env rm WHATSAPP_TOKEN production --yes
+vercel env add WHATSAPP_TOKEN production --sensitive   # cola o valor
+vercel redeploy <url-do-deploy-anterior> --target=production
 ```
+
+Variáveis já configuradas no Vercel: `VERIFY_TOKEN`, `WHATSAPP_TOKEN`,
+`PHONE_NUMBER_ID`, `APP_SECRET`, `ADMIN_PASSWORD`, `ADMIN_NUMBERS`,
+`ADMIN_WATSAPP_NUMBER`, `DATABASE_URL`, `SESSION_SECRET`, `PUBLIC_URL`,
+`PAYSUITE_API_TOKEN`, `PAYSUITE_WEBHOOK_SECRET` e as 8 `*_NEON_URL` / `*_SUPABASE_URL`
+por tenant.
 
 ### Estrutura usada para o Vercel
 
 - `server.js` é a entrada única (app Express) — o Vercel deteta o preset Express
 - Não é preciso `api/` nem `vercel.json`
+
+### ⚠️ Risco de segurança em aberto (não corrigido)
+
+`tenants.token` é guardado em **texto puro** e **não é mascarado** em nenhuma saída:
+
+- `sql/migrations_tenants.sql:10` — `token TEXT` (sem `pgcrypto`, sem cifra)
+- `src/services/dbService.js:197` — `listRows` faz `SELECT *`, logo devolve a coluna
+- `src/routes/admin.js:100` — `GET /rows` expõe a linha ao browser
+- `src/admin/ui.js:139,164` — a grelha e o modal de edição renderizam o token
+- `src/routes/admin.js:144` — `/meta-status` diagnostica só a variável de ambiente,
+  ignorando o token do tenant que é realmente usado nos envios
+
+Não existe helper de criptografia no projecto (sem `ENCRYPTION_KEY`, sem `crypto.js`).
+O único uso de `crypto` é a validação de assinatura HMAC dos webhooks
+(`src/routes/webhook.js:98`).
+
+Impacto: qualquer pessoa com sessão de admin válida lê o token da Meta em texto
+claro. Correção sugerida: cifra com `pgcrypto` ou com um helper AES simétrico
+chaveado por `ENCRYPTION_KEY`, e mascarar a coluna nas respostas da API.
 
 ---
 
@@ -223,14 +296,19 @@ whatsappbot/
 | `http://localhost:3000` não abre | O bot não está a correr | `npm run dev` |
 | Meta diz "verification failed" | `VERIFY_TOKEN` difere entre `.env` e Meta | Vê o Passo D |
 | Não recebe mensagens do WhatsApp | Webhook não subscrito ou bot/ngrok parado | Abre o terminal e reinicia o ngrok + `npm run dev` |
-| Erro `Meta API 401` | Token expirado (token temporário dura 24h) | Gera um novo na Meta, ou usa um Permanent Token |
+| Erro `Meta API 401` | Token expirado (token temporário dura 24h) | Já resolvido: há token permanente. Vê o relatório acima. Se der `190 could not be decrypted`, é transcrição errada do token |
+| Erro `Meta API 190 — could not be decrypted` | Token copiado com caractere trocado | Copia/cola de novo; validar com o `curl` da secção do relatório |
 | Tabela `clientes` não existe | `sql/init.sql` não foi corrido no Neon | Corre o script no SQL Editor |
 
 ---
 
 ## 🧭 Próximos passos sugeridos
 
-1. Gerar **Permanent Token** no Meta Business Manager (evita expirar de 24 em 24h)
-2. Submeter a app para **verificação de negócio** da Meta (necessário em produção)
-3. Ligar `notificacoes.js` aos eventos de pagamento da vossa API
-4. Conectar a vossa **API central TECNOINCUBADORA** via `dbService.js`
+1. ✅ **Permanent Token** no Meta Business Manager — feito em 2026-10-03 (ver relatório)
+2. Cifrar `tenants.token` e mascará-lo nas respostas da API de admin
+3. Remover as chamadas sem `tenant` que caem no token de ambiente:
+   `src/routes/admin.js:199,263,293` e `src/flows/notificacoes.js:13`
+   (`sendNotification` nem aceita `tenant`)
+4. Apanhar o `waba_id`, que é escrito na BD mas nunca lido pelo código
+5. Submeter a app para **verificação de negócio** da Meta (necessário em produção)
+6. Ligar `notificacoes.js` aos eventos de pagamento da vossa API
