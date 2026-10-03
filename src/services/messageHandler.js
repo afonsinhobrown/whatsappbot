@@ -92,8 +92,9 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return sendTextMessage(phone, `❌ Erro no comando. Use: !responder NUMERO MENSAGEM`, tenant);
     }
   }
+}
 
-  // O dono também é cliente do bot, por isso escreve "bom dia" de vez em
+// O dono também é cliente do bot, por isso escreve "bom dia" de vez em
   // quando para testar. Sem isto, o bot tratava o próprio dono como cliente e
   //-lhe mandava a saudação e o menu — ele já sabe quem é, a mensagem só
   // barrava o ecrã. Silêncio é o que se pede aqui.
