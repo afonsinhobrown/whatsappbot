@@ -137,3 +137,37 @@ ${text}`;
     return {};
   }
 }
+
+/**
+ * Envia um ficheiro multimédia (áudio ou imagem) para a IA analisar.
+ *
+ * @param {object} mediaData - Objeto com mimeType e data (base64)
+ * @param {string} prompt - Instruções para a análise
+ * @param {object} tenant - Tenant actual
+ * @returns {Promise<string>}
+ */
+export async function analyzeMedia(mediaData, prompt, tenant = null) {
+  const genAI = getClient();
+  const model = genAI.getGenerativeModel({
+    model: "gemini-3.5-flash",
+    systemInstruction: buildSystemPrompt(tenant),
+  });
+
+  const parts = [
+    { text: prompt },
+    {
+      inlineData: {
+        data: mediaData.data,
+        mimeType: mediaData.mimeType,
+      },
+    },
+  ];
+
+  try {
+    const result = await model.generateContent(parts);
+    return result.response.text().trim();
+  } catch (err) {
+    console.error("[IA] Falha ao analisar media:", err);
+    return "Desculpa, não consegui processar esse ficheiro no momento.";
+  }
+}

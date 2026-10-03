@@ -1,5 +1,5 @@
-import { sendTextMessage } from "./metaApi.js";
-import { isAiEnabled } from "./aiService.js";
+import { sendTextMessage, downloadMedia } from "./metaApi.js";
+import { isAiEnabled, analyzeMedia } from "./aiService.js";
 import { handleAiMessage } from "../flows/aiChat.js";
 import { getClientByWhatsapp, touchClient, setClientName } from "./dbService.js";
 import { getSession, setSession } from "./sessionService.js";
@@ -41,7 +41,7 @@ const somenteDigitos = (v) => String(v || "").replace(/\D/g, "");
  */
 export async function handleIncomingMessage(message, changeValue, tenant) {
   const phone = message.from;
-  const text = ((message.text && message.text.body) || "").trim();
+  let text = ((message.text && message.text.body) || "").trim();
   const senderName =
     (changeValue &&
       changeValue.contacts &&
@@ -50,7 +50,36 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       changeValue.contacts[0].profile.name) ||
     "";
 
-  console.log(`[MSG][tenant ${tenant ? tenant.id : "?"}] ${senderName || "cliente"} (${phone}): "${text}"`);
+  console.log(`[MSG][tenant ${tenant ? tenant.id : "?"}] ${senderName || "cliente"} (${phone}): "${text || "[" + message.type + "]"}"`);
+
+  const send = (reply) => sendTextMessage(phone, reply, tenant);
+
+  // Fase 5 e 6: Áudio e Imagens
+  if (message.type === "audio" && message.audio) {
+    if (!isAiEnabled()) return send("Desculpa, não consigo ouvir áudios neste momento.");
+    send("A ouvir o teu áudio... 🎧");
+    try {
+      const media = await downloadMedia(message.audio.id, tenant);
+      const respostaIA = await analyzeMedia(media, "O utilizador enviou um áudio. Responde diretamente e amigavelmente ao que ele pede ou diz.", tenant);
+      return send(respostaIA);
+    } catch (e) {
+      console.error("[VOZ] Falha ao processar:", e.message);
+      return send("Desculpa, tive um problema a abrir o áudio. Podes escrever?");
+    }
+  }
+
+  if (message.type === "image" && message.image) {
+    if (!isAiEnabled()) return send("Desculpa, não consigo ver imagens neste momento.");
+    send("A analisar a tua imagem... 👁️");
+    try {
+      const media = await downloadMedia(message.image.id, tenant);
+      const respostaIA = await analyzeMedia(media, "O utilizador enviou esta imagem. Se for um comprovativo de pagamento, confirma e extrai os dados. Senão, descreve o que vês ou responde adequadamente.", tenant);
+      return send(respostaIA);
+    } catch (e) {
+      console.error("[IMAGEM] Falha ao processar:", e.message);
+      return send("Desculpa, tive um problema a ler a imagem.");
+    }
+  }
 
   // Se a mensagem vier do administrador e for um comando de resposta (!responder numero mensagem)
   // A comparação é feita só com dígitos: o número chega da Meta como "2588..." e
@@ -106,7 +135,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     return;
   }
 
-  const send = (reply) => sendTextMessage(phone, reply, tenant);
+  // const send foi movido para cima
   const lower = text.toLowerCase();
 
   const client = await getClientByWhatsapp(tenant.id, phone);

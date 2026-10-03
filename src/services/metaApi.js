@@ -63,3 +63,36 @@ function formatTo(to) {
   if (digits.length === 9) digits = `258${digits}`;
   return digits;
 }
+
+/**
+ * Faz download de ficheiros media (voz, imagem, pdf) enviados pelos utilizadores.
+ */
+export async function downloadMedia(mediaId, tenant) {
+  const token = (tenant && tenant.token) || env.whatsappToken;
+  if (!token) throw new Error("No token for downloading media");
+
+  // Passo 1: Pedir o URL do ficheiro
+  const infoUrl = `https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`;
+  const infoRes = await fetch(infoUrl, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!infoRes.ok) {
+    throw new Error(`Failed to get media info: ${await infoRes.text()}`);
+  }
+  const info = await infoRes.json();
+  if (!info.url) throw new Error("Media URL not found in response");
+
+  // Passo 2: Fazer download binário usando o URL
+  const mediaRes = await fetch(info.url, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!mediaRes.ok) {
+    throw new Error(`Failed to download media bytes: ${await mediaRes.text()}`);
+  }
+  
+  const buffer = await mediaRes.arrayBuffer();
+  return {
+    mimeType: info.mime_type,
+    data: Buffer.from(buffer).toString("base64") // Base64 pronto para Gemini
+  };
+}
