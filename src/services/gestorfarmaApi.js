@@ -131,6 +131,9 @@ export const enviarCotacaoEmail = (id, payload = {}) =>
 
 /* --- Avisos de cobrança --- */
 
+export const getAvisos = (cotacaoId) =>
+  request(`/cotacoes/${cotacaoId}/avisos/`);
+
 export const emitirAviso = (cotacaoId, payload = {}) =>
   request(`/cotacoes/${cotacaoId}/avisos/`, { method: "POST", body: payload });
 

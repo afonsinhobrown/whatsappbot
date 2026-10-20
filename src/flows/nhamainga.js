@@ -12,6 +12,7 @@ import {
   getCotacaoPdf,
   enviarCotacaoEmail,
   emitirAviso,
+  getAvisos,
   getAvisoPdf,
   enviarAvisoEmail,
   getVendasPdf,
@@ -735,15 +736,45 @@ export async function handleNhamaingaState(estado, client, ctx, text, send, tena
 
       case "nhamainga_aviso_venc": {
         if (!dataValida(text.trim())) return send("Data inválida. Use AAAA-MM-DD.");
-        const aviso = await emitirAviso(ctx.cotacao.id, {
-          data_vencimento: text.trim(),
-        });
+
+        let aviso;
+        let nota = "";
+        try {
+          aviso = await emitirAviso(ctx.cotacao.id, {
+            data_vencimento: text.trim(),
+          });
+        } catch (err) {
+          // A API só permite um aviso activo por cotação. Se já existe,
+          // reutilizamos esse em vez de falhar — o utilizador quer enviar o
+          // aviso, não criar um duplicado.
+          const ativo = /aviso de cobrança activo/i.test(err.message);
+          if (err.status === 400 && ativo) {
+            const res = await getAvisos(ctx.cotacao.id);
+            const lista = Array.isArray(res) ? res : res.results || [];
+            const ativos = new Set([
+              "EMITIDO",
+              "ENVIADO",
+              "PAGO_PARCIAL",
+              "VENCIDO",
+            ]);
+            aviso = lista.find((a) =>
+              ativos.has(String(a.status || "").toUpperCase())
+            );
+            if (!aviso) throw err;
+            nota =
+              `ℹ️ Já existia o aviso *${aviso.numero || `#${aviso.id}`}* ` +
+              "activo. Vou reutilizá-lo.\n\n";
+          } else {
+            throw err;
+          }
+        }
+
         await setSession(client.id, "nhamainga_aviso_envio", {
           ...ctx,
           aviso,
         });
         return send(
-          `📄 Aviso *${aviso.numero || `#${aviso.id}`}* emitido.\n` +
+          `${nota}📄 Aviso *${aviso.numero || `#${aviso.id}`}* pronto.\n` +
             `Saldo: *${fmtMZN(aviso.saldo ?? aviso.valor_total)}*\n\n` +
             "Como quer enviar?\n\n1. WhatsApp (PDF)\n2. Email (PDF)\n3. Ambos"
         );
