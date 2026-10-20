@@ -89,10 +89,17 @@ export async function handleCashSistema(client, ctx, text, send) {
   }
 
   await setSession(client.id, "cash_nome", { sistema });
+
+  const notaArmazem =
+    sistema === "ARMAZEM"
+      ? "\n\nℹ️ No *Armazém*, a data-fim é actualizada para o tenant e para *todos os utilizadores* dele."
+      : "";
+
   return send(
     `Sistema: *${SISTEMAS_LICENCA_CASH[sistema]}*\n\n` +
-      "Escreva o *nome do tenant/cliente* (pelo menos 2 letras).\n\n" +
-      'Escreva "0" para cancelar.'
+      "Escreva o *nome do tenant/cliente* (pelo menos 2 letras)." +
+      notaArmazem +
+      '\n\nEscreva "0" para cancelar.'
   );
 }
 
@@ -242,6 +249,11 @@ export async function handleCashValor(client, ctx, text, send) {
   });
 
   const c = ctx.conta;
+  const ambito =
+    ctx.sistema === "ARMAZEM"
+      ? "Âmbito: *tenant + todos os utilizadores do Armazém*\n"
+      : "";
+
   return send(
     "📋 *Confirmar actualização?*\n\n" +
       `Sistema: *${SISTEMAS_LICENCA_CASH[ctx.sistema]}*\n` +
@@ -249,8 +261,9 @@ export async function handleCashValor(client, ctx, text, send) {
       `Email: ${c.email || "sem email"}\n` +
       `Data-fim actual: *${c.data_fim || "sem data"}*\n` +
       `Nova data-fim: *${ctx.dataFim}*\n` +
-      `Valor pago: ${valor !== null ? formatMoney(valor) : "não indicado"}\n\n` +
-      "1. Confirmar e emitir talão\n" +
+      `Valor pago: ${valor !== null ? formatMoney(valor) : "não indicado"}\n` +
+      ambito +
+      "\n1. Confirmar e emitir talão\n" +
       "0. Cancelar"
   );
 }
@@ -300,6 +313,9 @@ function textoTalao(r) {
     (r.conta_email ? `Email: ${r.conta_email}\n` : "") +
     `Data-fim anterior: ${r.data_fim_anterior || "sem data"}\n` +
     `Nova data-fim: *${r.data_fim_nova}*\n` +
+    (r.sistema === "ARMAZEM"
+      ? "Âmbito: tenant + *todos os utilizadores* do Armazém\n"
+      : "") +
     (r.valor !== null && r.valor !== undefined
       ? `Valor pago: ${formatMoney(r.valor)}\n`
       : "") +

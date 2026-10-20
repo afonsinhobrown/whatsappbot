@@ -886,10 +886,17 @@ export async function definirDataFimLicenca(sistema, contaId, dataFim, valor = n
       if (atual.erro) throw new Error(`Falha ao ler Armazém: ${atual.erro}`);
       if (!atual.rows.length) throw new Error("Conta não encontrada no Armazém");
 
-      // A data-fim é partilhada pelo tenant e pelos subutilizadores.
+      // A data-fim é partilhada pelo tenant e por TODOS os utilizadores dele
+      // (subutilizadores directos e de níveis mais fundos). A CTE recursiva
+      // garante que não fica nenhum utilizador com a validade antiga.
       await executarDual(
         "ARMAZEM",
-        "UPDATE users SET trial_ends_at = $2::timestamp WHERE id = $1 OR parent_id = $1",
+        "WITH RECURSIVE arvore AS (" +
+          "  SELECT id FROM users WHERE id = $1 " +
+          "  UNION ALL " +
+          "  SELECT u.id FROM users u JOIN arvore a ON u.parent_id = a.id" +
+          ") UPDATE users SET trial_ends_at = $2::timestamp " +
+          "WHERE id IN (SELECT id FROM arvore)",
         [contaId, fimDia]
       );
       return {
