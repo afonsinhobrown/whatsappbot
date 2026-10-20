@@ -7,6 +7,22 @@ export const MENU = [
   "6 - 📅 Agendar Demonstração / Qualificação",
 ].join("\n");
 
+export function sendAdminHelp(send) {
+  return send(
+    "🛠️ *Instruções do Admin*\n\n" +
+      "*!licenca* — actualizar licença paga em cash\n" +
+      "1. Escolher o sistema (1 a 4)\n" +
+      "2. Escrever o nome do tenant\n" +
+      "3. Escolher/confirmar a conta\n" +
+      "4. Nova data-fim (AAAA-MM-DD) ou +30/+60/+90/+365\n" +
+      "5. Valor pago (0 para omitir)\n" +
+      "6. 1 para confirmar e receber o talão\n\n" +
+      "*!responder NÚMERO MENSAGEM* — responder a um cliente\n" +
+      "*!dashboard* — relatório de gestão\n" +
+      "*!ajuda* — mostrar estas instruções"
+  );
+}
+
 export function sendMenu(send, nome, isAdmin = false) {
   const saudacao = nome ? `Olá ${nome}!` : "Olá!";
   
@@ -15,7 +31,8 @@ export function sendMenu(send, nome, isAdmin = false) {
     menuStr += "\n\n🛠️ *Comandos Privados (Apenas Admin):*\n";
     menuStr += "• *!dashboard* - Relatório IA de Gestão\n";
     menuStr += "• *!licenca* - Actualizar licença (pagamento cash)\n";
-    menuStr += "• *!responder [número] [msg]* - Chat manual com cliente";
+    menuStr += "• *!responder [número] [msg]* - Chat manual com cliente\n";
+    menuStr += "• *!ajuda* - Instruções dos comandos";
   }
 
   return send(

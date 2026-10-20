@@ -3,7 +3,7 @@ import { isAiEnabled, analyzeMedia } from "./aiService.js";
 import { handleAiMessage } from "../flows/aiChat.js";
 import { getClientByWhatsapp, touchClient, setClientName } from "./dbService.js";
 import { getSession, setSession } from "./sessionService.js";
-import { MENU, sendMenu } from "../flows/menu.js";
+import { MENU, sendMenu, sendAdminHelp } from "../flows/menu.js";
 import {
   startCotacao,
   startEncomenda,
@@ -114,6 +114,10 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       await getSession(tenant.id, adminClient.id);
       await setSession(adminClient.id, "cash_sistema", {});
       return startLicencaCash(send);
+    }
+
+    if (["!ajuda", "!help"].includes(text.toLowerCase())) {
+      return sendAdminHelp(send);
     }
 
     if (text.toLowerCase() === "!dashboard") {
