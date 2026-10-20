@@ -160,16 +160,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   }
 }
 
-// O dono também é cliente do bot, por isso escreve "bom dia" de vez em
-  // quando para testar. Sem isto, o bot tratava o próprio dono como cliente e
-  //-lhe mandava a saudação e o menu — ele já sabe quem é, a mensagem só
-  // barrava o ecrã. Silêncio é o que se pede aqui.
-  if (isAdmin && isSaudacao(text)) {
-    console.log(`[MSG] saudação do próprio dono (${phone}) — sem resposta`);
-    return;
-  }
-
-  // const send foi movido para cima
+// const send foi movido para cima
   const lower = text.toLowerCase();
 
   const client = await getClientByWhatsapp(tenant.id, phone);
@@ -179,6 +170,19 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   const session = await getSession(tenant.id, client.id);
   const estado = session.estado_atual || "inicio";
   const ctx = session.contexto || {};
+
+  // O dono também usa o bot para testar; uma saudação solta no menu normal
+  // não precisa de resposta. Mas dentro do menu Nhamainga (ou no número
+  // dedicado) a saudação é parte da conversa e deve ser acolhida.
+  if (
+    isAdmin &&
+    !isNhamaingaNumber(phone) &&
+    isSaudacao(text) &&
+    !estado.startsWith("nhamainga_")
+  ) {
+    console.log(`[MSG] saudação do próprio dono (${phone}) — sem resposta`);
+    return;
+  }
 
   // O fluxo de licenças cash só existe para o dono/admin. Se o número sair da
   // lista de admins a meio, não pode continuar a mexer em licenças.
@@ -202,7 +206,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return handleNhamaingaState(estado, client, ctx, text, send, tenant);
     }
     await setSession(client.id, "nhamainga_menu", {});
-    return startNhamaingaMenu(send);
+    return startNhamaingaMenu(send, client, text);
   }
 
   // O admin abre o mesmo menu com "nhamainga". "sair"/"menu"/"0" devolvem-no

@@ -1,6 +1,7 @@
 import { env } from "../config/env.js";
 import { setSession } from "../services/sessionService.js";
 import { sendDocumentMessage } from "../services/metaApi.js";
+import { isSaudacao, responderSaudacaoEmFluxo } from "./saudacao.js";
 import {
   getMinhaFarmacia,
   getReport,
@@ -83,7 +84,41 @@ export function isNhamaingaNumber(phone) {
   return Boolean(env.nhamaingaNumber) && soDigitos(phone) === env.nhamaingaNumber;
 }
 
-export function startNhamaingaMenu(send) {
+function saudacaoPorTexto(text) {
+  const t = String(text || "").toLowerCase();
+  if (t.includes("bom dia")) return "Bom dia";
+  if (t.includes("boa tarde")) return "Boa tarde";
+  if (t.includes("boa noite")) return "Boa noite";
+  if (t.includes("boa madrugada")) return "Boa madrugada";
+  return "Olá";
+}
+
+function conversaSimples(text) {
+  const t = String(text || "").toLowerCase();
+
+  if (/\b(obrigad[oa]|agradecid[oa]|valeu)\b/.test(t)) {
+    return "De nada! 😊 Se precisar de mais alguma coisa, escreva *menu*.";
+  }
+  if (/\b(tchau|adeus|at[eé]\s+(logo|breve|mais))\b/.test(t)) {
+    return "Até breve! 👋 A Nhamainga fica por aqui quando precisar.";
+  }
+  if (/\b(quem\s+[eé]s|o\s+que\s+fazes|o\s+que\s+voc[eê]\s+faz|para\s+que\s+serves)\b/.test(t)) {
+    return (
+      "Sou o assistente da *Nhamainga*. Posso mostrar os dados da farmácia, " +
+      "saldos, estoque, cotações, avisos de pagamento e relatórios."
+    );
+  }
+  return null;
+}
+
+function acolhimento(client, text) {
+  const nome = client && client.nome ? `, ${client.nome}` : "";
+  const saudacao = saudacaoPorTexto(text);
+  return `${saudacao}${nome}! 👋\n\nSou o assistente da *Nhamainga*. Em que posso ajudar?\n\n`;
+}
+
+export function startNhamaingaMenu(send, client = null, text = "") {
+  if (isSaudacao(text)) return send(acolhimento(client, text) + MENU);
   return send(MENU);
 }
 
@@ -249,6 +284,13 @@ function parseContacto(texto) {
 }
 
 async function menuOpcao(client, text, send, tenant) {
+  const conversa = conversaSimples(text);
+  if (conversa) return send(conversa);
+
+  if (isSaudacao(text)) {
+    return send(acolhimento(client, text) + MENU);
+  }
+
   const opcao = text.trim();
   switch (opcao) {
     case "1": {
@@ -284,7 +326,7 @@ async function menuOpcao(client, text, send, tenant) {
         "📊 *Relatórios*\n\n1. Vendas (PDF)\n2. BI (PDF)\n3. Financeiro (PDF)\n0. Voltar"
       );
     default:
-      return send(MENU);
+      return send("Não entendi. Escolha uma opção do menu:\n\n" + MENU);
   }
 }
 
@@ -487,6 +529,15 @@ export async function handleNhamaingaState(estado, client, ctx, text, send, tena
   }
   if (lower === "0" && estado !== "nhamainga_cot_mais") {
     return voltarMenu(client, send);
+  }
+
+  const conversa = conversaSimples(text);
+  if (conversa) return send(conversa);
+
+  // A meio de um preenchimento, uma saudação não pode deitar fora o que já
+  // foi respondido; acolhe-se e continua-se no mesmo estado.
+  if (estado !== "nhamainga_menu" && isSaudacao(text)) {
+    return responderSaudacaoEmFluxo(client, send);
   }
 
   try {
