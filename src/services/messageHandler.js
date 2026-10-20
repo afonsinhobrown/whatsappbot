@@ -38,6 +38,11 @@ import {
   handleCashValor,
   handleCashConfirmar,
 } from "../flows/licencaCash.js";
+import {
+  isNhamaingaNumber,
+  startNhamaingaMenu,
+  handleNhamaingaState,
+} from "../flows/nhamainga.js";
 import { adminNumbers } from "../config/env.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
@@ -107,6 +112,13 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   const isAdmin = numerosAdmin.includes(somenteDigitos(phone));
 
   if (isAdmin) {
+    if (["nhamainga", "!nhamainga"].includes(text.toLowerCase())) {
+      const adminClient = await getClientByWhatsapp(tenant.id, phone);
+      await getSession(tenant.id, adminClient.id);
+      await setSession(adminClient.id, "nhamainga_menu", {});
+      return startNhamaingaMenu(send);
+    }
+
     if (["!licenca", "!licencas", "!cash"].includes(text.toLowerCase())) {
       const adminClient = await getClientByWhatsapp(tenant.id, phone);
       // getSession cria a linha se ainda não existir; setSession sozinho não
@@ -173,6 +185,34 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   if (estado.startsWith("cash_") && !isAdmin) {
     await setSession(client.id, "menu", {});
     return send("Esse comando é restrito ao administrador.");
+  }
+
+  // Menu especializado da farmácia Nhamainga: o número dedicado entra sempre
+  // neste menu, independentemente do estado anterior da conversa.
+  if (isNhamaingaNumber(phone)) {
+    if (estado.startsWith("nhamainga_") && estado !== "nhamainga_menu") {
+      return handleNhamaingaState(estado, client, ctx, text, send, tenant);
+    }
+    if (
+      estado === "nhamainga_menu" &&
+      lower !== "0" &&
+      lower !== "menu" &&
+      !isSaudacao(text)
+    ) {
+      return handleNhamaingaState(estado, client, ctx, text, send, tenant);
+    }
+    await setSession(client.id, "nhamainga_menu", {});
+    return startNhamaingaMenu(send);
+  }
+
+  // O admin abre o mesmo menu com "nhamainga". "sair"/"menu"/"0" devolvem-no
+  // ao menu normal do bot.
+  if (estado.startsWith("nhamainga_")) {
+    if (["menu", "0", "sair", "cancelar"].includes(lower)) {
+      await setSession(client.id, "menu", {});
+      return sendMenu(send, senderName, isAdmin);
+    }
+    return handleNhamaingaState(estado, client, ctx, text, send, tenant);
   }
 
   // Comandos globais: voltar ao menu / cancelar

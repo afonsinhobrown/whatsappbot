@@ -26,6 +26,12 @@ export const env = {
   // Google Gemini — motor de IA GRATUITO (aistudio.google.com).
   // Sem esta variável a plataforma AI fica desactivada e o bot funciona como antes.
   geminiApiKey: process.env.GEMINI_API_KEY || "",
+  // Menu especializado da farmácia Nhamainga.
+  nhamaingaNumber: (process.env.NHAMAINGA_NUMBER || "258879941355").replace(/\D/g, ""),
+  // API do GestorFarma (inclui /api/v1) e conta usada pelo bot.
+  gestorfarmaApiUrl: (process.env.GESTORFARMA_API_URL || "").replace(/\/+$/, ""),
+  gestorfarmaBotEmail: process.env.GESTORFARMA_BOT_EMAIL || "",
+  gestorfarmaBotPassword: process.env.GESTORFARMA_BOT_PASSWORD || "",
 };
 
 /**

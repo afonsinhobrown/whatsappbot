@@ -55,6 +55,83 @@ export async function sendTextMessage(to, text, tenant) {
 }
 
 /**
+ * Envia um documento (PDF) por WhatsApp.
+ *
+ * Aceita `buffer` (upload para a Meta) ou `link` (URL pública). O upload é o
+ * caminho usado para os PDFs autenticados do GestorFarma, que não têm link
+ * público.
+ */
+export async function sendDocumentMessage(to, doc = {}, tenant) {
+  const formattedTo = formatTo(to);
+  const token = (tenant && tenant.token) || env.whatsappToken;
+  const phoneNumberId = (tenant && tenant.phone_number_id) || env.phoneNumberId;
+  const filename = doc.filename || "documento.pdf";
+  const caption = doc.caption || "";
+
+  if (!token || !phoneNumberId) {
+    console.log(`[MOCK] Documento para ${formattedTo}: ${filename} ${caption}`);
+    return { mock: true, to: formattedTo, filename };
+  }
+
+  let document;
+
+  if (doc.buffer) {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", "application/pdf");
+    form.append(
+      "file",
+      new Blob([doc.buffer], { type: "application/pdf" }),
+      filename
+    );
+
+    const upload = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      }
+    );
+
+    if (!upload.ok) {
+      throw new Error(`Meta media upload ${upload.status}: ${await upload.text()}`);
+    }
+
+    const uploaded = await upload.json();
+    document = { id: uploaded.id, filename, caption };
+  } else if (doc.link) {
+    document = { link: doc.link, filename, caption };
+  } else {
+    throw new Error("sendDocumentMessage: buffer ou link em falta");
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formattedTo,
+        type: "document",
+        document,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Meta API ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+}
+
+/**
  * A API da Meta espera apenas dígitos, com código de país e sem "+".
  * Números moçambicanos sem código recebem 258 por defeito.
  */

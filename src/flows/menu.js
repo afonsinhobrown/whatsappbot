@@ -19,6 +19,7 @@ export function sendAdminHelp(send) {
       "6. 1 para confirmar e receber o talão\n\n" +
       "*!responder NÚMERO MENSAGEM* — responder a um cliente\n" +
       "*!dashboard* — relatório de gestão\n" +
+      "*nhamainga* — abrir o menu especializado da farmácia Nhamainga\n" +
       "*!ajuda* — mostrar estas instruções"
   );
 }
@@ -31,6 +32,7 @@ export function sendMenu(send, nome, isAdmin = false) {
     menuStr += "\n\n🛠️ *Comandos Privados (Apenas Admin):*\n";
     menuStr += "• *!dashboard* - Relatório IA de Gestão\n";
     menuStr += "• *!licenca* - Actualizar licença (pagamento cash)\n";
+    menuStr += "• *nhamainga* - Menu especializado da farmácia Nhamainga\n";
     menuStr += "• *!responder [número] [msg]* - Chat manual com cliente\n";
     menuStr += "• *!ajuda* - Instruções dos comandos";
   }
