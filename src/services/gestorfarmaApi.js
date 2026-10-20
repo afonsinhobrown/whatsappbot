@@ -123,6 +123,9 @@ export const criarCotacao = (payload) =>
 
 export const getCotacaoPdf = (id) => request(`/cotacoes/${id}/pdf/`, { raw: true });
 
+export const apagarCotacao = (id) =>
+  request(`/cotacoes/${id}/`, { method: "DELETE" });
+
 export const enviarCotacaoEmail = (id, payload = {}) =>
   request(`/cotacoes/${id}/email/`, { method: "POST", body: payload });
 
