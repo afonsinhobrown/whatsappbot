@@ -29,6 +29,15 @@ import {
   responderSaudacaoEmFluxo,
 } from "../flows/saudacao.js";
 import { sendDashboardReport } from "../flows/dashboard.js";
+import {
+  startLicencaCash,
+  handleCashSistema,
+  handleCashNome,
+  handleCashConta,
+  handleCashData,
+  handleCashValor,
+  handleCashConfirmar,
+} from "../flows/licencaCash.js";
 import { adminNumbers } from "../config/env.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
@@ -98,6 +107,15 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   const isAdmin = numerosAdmin.includes(somenteDigitos(phone));
 
   if (isAdmin) {
+    if (["!licenca", "!licencas", "!cash"].includes(text.toLowerCase())) {
+      const adminClient = await getClientByWhatsapp(tenant.id, phone);
+      // getSession cria a linha se ainda não existir; setSession sozinho não
+      // actualiza nada quando o admin nunca falou com o bot.
+      await getSession(tenant.id, adminClient.id);
+      await setSession(adminClient.id, "cash_sistema", {});
+      return startLicencaCash(send);
+    }
+
     if (text.toLowerCase() === "!dashboard") {
       const sendFn = (reply) => sendTextMessage(phone, reply, tenant);
       return sendDashboardReport(sendFn, tenant);
@@ -146,6 +164,13 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   const estado = session.estado_atual || "inicio";
   const ctx = session.contexto || {};
 
+  // O fluxo de licenças cash só existe para o dono/admin. Se o número sair da
+  // lista de admins a meio, não pode continuar a mexer em licenças.
+  if (estado.startsWith("cash_") && !isAdmin) {
+    await setSession(client.id, "menu", {});
+    return send("Esse comando é restrito ao administrador.");
+  }
+
   // Comandos globais: voltar ao menu / cancelar
   if (COMANDOS_MENU.includes(lower)) {
     await setSession(client.id, "menu", {});
@@ -191,6 +216,18 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return handlePagamentoEscolherPlano(client, ctx, text, send);
     case "pagamento_metodo":
       return handlePagamentoMetodo(client, ctx, text, send);
+    case "cash_sistema":
+      return handleCashSistema(client, ctx, text, send);
+    case "cash_nome":
+      return handleCashNome(client, ctx, text, send);
+    case "cash_conta":
+      return handleCashConta(client, ctx, text, send);
+    case "cash_data":
+      return handleCashData(client, ctx, text, send);
+    case "cash_valor":
+      return handleCashValor(client, ctx, text, send);
+    case "cash_confirmar":
+      return handleCashConfirmar(client, ctx, text, send);
     case "humano":
       // Um cliente que pede falar com administrador mas depois escreve "menu"
       // (ou qualquer comando global) já é tratado acima e sai do estado.

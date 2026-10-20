@@ -668,6 +668,241 @@ export async function listarPlanosSaaS(produtoNome) {
   }
 }
 
+/* =========================================================================
+ * LICENÇAS CASH (painel admin)
+ *
+ * Actualiza a data-fim da licença directamente na base de dados do sistema
+ * do cliente, para quem paga em dinheiro/transferência e não passa pela
+ * PaySuite. Não cria pagamento online: o talão de conferência é guardado
+ * na base de dados do bot (tabela `licencas_cash`).
+ * ========================================================================= */
+
+export const SISTEMAS_LICENCA_CASH = {
+  CAFEPOINT: "Cafe Point",
+  XONGUILE: "Salaoapp / Xonguile",
+  GESTORFARMA: "GestorFarma",
+  ARMAZEM: "Armazém",
+};
+
+/**
+ * Executa uma escrita em todas as bases configuradas do sistema (principal e
+ * secundária). O `queryDual` engole erros para leituras; aqui precisamos de
+ * saber se pelo menos uma escrita passou, senão o admin pensaria que a
+ * licença foi actualizada quando não foi.
+ */
+async function executarDual(sistema, sql, values) {
+  const fontes = FONTES[sistema];
+  if (!fontes) throw new Error(`Sistema desconhecido: ${sistema}`);
+
+  let escritas = 0;
+  let ultimoErro = null;
+
+  for (const tipo of ["primary", "secondary"]) {
+    if (!fontes[tipo]) continue;
+    const pool = poolDe(sistema, tipo);
+    if (!pool) continue;
+    try {
+      await pool.query(sql, values);
+      escritas++;
+    } catch (err) {
+      ultimoErro = err.message;
+      console.error(`[CASH] ${sistema} (${tipo}) falhou ao actualizar:`, err.message);
+    }
+  }
+
+  if (escritas === 0) {
+    throw new Error(ultimoErro || `Sem ligação à base de dados de ${sistema}`);
+  }
+}
+
+const CONSULTA_CONTAS_CASH = {
+  CAFEPOINT: {
+    sql:
+      'SELECT r.id, r.name AS nome, r.email, l."endDate" AS data_fim, ' +
+      'to_char(l."endDate", \'YYYY-MM-DD\') AS data_fim_texto, l.status AS estado ' +
+      'FROM "Restaurant" r LEFT JOIN "License" l ON l."restaurantId" = r.id ' +
+      'WHERE r.name ILIKE $1 ORDER BY r.name LIMIT 20',
+    chave: "email",
+  },
+  XONGUILE: {
+    sql:
+      'SELECT s.id, s.name AS nome, s.email, l."validUntil" AS data_fim, ' +
+      'l.data_fim_texto, l.status::text AS estado ' +
+      'FROM "Salons" s LEFT JOIN LATERAL (' +
+      '  SELECT "validUntil", to_char("validUntil", \'YYYY-MM-DD\') AS data_fim_texto, status ' +
+      '  FROM "Licenses" WHERE "SalonId" = s.id ' +
+      '  ORDER BY "createdAt" DESC NULLS LAST LIMIT 1' +
+      ') l ON true ' +
+      'WHERE s.name ILIKE $1 ORDER BY s.name LIMIT 20',
+    chave: "email",
+  },
+  GESTORFARMA: {
+    sql:
+      "SELECT f.id, f.nome AS nome, f.email, l.data_fim, l.data_fim_texto, l.is_ativa, l.paga " +
+      "FROM farmacias_farmacia f LEFT JOIN LATERAL (" +
+      "  SELECT data_fim, to_char(data_fim, 'YYYY-MM-DD') AS data_fim_texto, is_ativa, paga " +
+      "  FROM farmacias_licenca WHERE farmacia_id = f.id " +
+      "  ORDER BY data_inicio DESC NULLS LAST, id DESC LIMIT 1" +
+      ") l ON true " +
+      "WHERE f.nome ILIKE $1 ORDER BY f.nome LIMIT 20",
+    chave: "email",
+  },
+  ARMAZEM: {
+    sql:
+      "SELECT u.id, u.company_name AS nome, u.email, u.trial_ends_at AS data_fim, " +
+      "to_char(u.trial_ends_at, 'YYYY-MM-DD') AS data_fim_texto, u.plan AS estado " +
+      "FROM users u WHERE u.parent_id IS NULL AND u.company_name ILIKE $1 " +
+      "ORDER BY u.company_name LIMIT 20",
+    chave: "email",
+  },
+};
+
+/**
+ * Procura contas pelo nome do tenant em cada sistema. Devolve várias linhas
+ * quando o nome é ambíguo para o admin escolher a certa, em vez de actualizar
+ * a licença da pessoa errada.
+ */
+export async function procurarContasLicencaCash(sistema, nome) {
+  const cfg = CONSULTA_CONTAS_CASH[sistema];
+  if (!cfg) throw new Error(`Sistema inválido: ${sistema}`);
+
+  const termo = String(nome || "").trim();
+  if (termo.length < 2) throw new Error("Escreva pelo menos 2 caracteres do nome do tenant");
+
+  const { rows, erro } = await consultar(sistema, cfg.sql, [`%${termo}%`]);
+  if (erro) throw new Error(`Falha ao ler ${sistema}: ${erro}`);
+
+  return rows.map((r) => ({
+    id: r.id,
+    nome: r.nome,
+    email: r.email || null,
+    data_fim: r.data_fim_texto || r.data_fim || null,
+    estado:
+      typeof r.is_ativa === "boolean"
+        ? r.is_ativa
+          ? "ativa"
+          : "inativa"
+        : r.estado || null,
+    pago: typeof r.paga === "boolean" ? r.paga : null,
+  }));
+}
+
+/**
+ * Escreve a nova data-fim da licença da conta indicada. Devolve a data
+ * anterior para o talão. Só actualiza licenças já existentes: criar uma
+ * licença nova exige plano/chave e não deve ser decidido por engano.
+ */
+export async function definirDataFimLicenca(sistema, contaId, dataFim, valor = null) {
+  const fimDia = `${dataFim} 23:59:59`;
+  const valorPago =
+    valor === null || valor === undefined || valor === "" ? null : Number(valor);
+
+  if (valorPago !== null && (!Number.isFinite(valorPago) || valorPago < 0)) {
+    throw new Error("Valor pago inválido");
+  }
+
+  switch (sistema) {
+    case "CAFEPOINT": {
+      const atual = await consultar(
+        "CAFEPOINT",
+        'SELECT id, "endDate" AS data_fim, to_char("endDate", \'YYYY-MM-DD\') AS data_fim_texto ' +
+          'FROM "License" WHERE "restaurantId" = $1 LIMIT 1',
+        [contaId]
+      );
+      if (atual.erro) throw new Error(`Falha ao ler Cafe Point: ${atual.erro}`);
+      if (!atual.rows.length) throw new Error("Esta conta não tem licença registada no Cafe Point");
+
+      await executarDual(
+        "CAFEPOINT",
+        'UPDATE "License" SET status = \'ACTIVE\', "endDate" = $2::timestamp WHERE "restaurantId" = $1',
+        [contaId, fimDia]
+      );
+      return {
+        anterior: atual.rows[0].data_fim_texto || atual.rows[0].data_fim || null,
+        nova: dataFim,
+      };
+    }
+
+    case "XONGUILE": {
+      const atual = await consultar(
+        "XONGUILE",
+        'SELECT id, "validUntil" AS data_fim, to_char("validUntil", \'YYYY-MM-DD\') AS data_fim_texto ' +
+          'FROM "Licenses" WHERE "SalonId" = $1 ' +
+          'ORDER BY "createdAt" DESC NULLS LAST LIMIT 1',
+        [contaId]
+      );
+      if (atual.erro) throw new Error(`Falha ao ler Salaoapp: ${atual.erro}`);
+      if (!atual.rows.length) throw new Error("Este salão não tem licença registada no Salaoapp");
+
+      // A actualização é feita pela subconsulta do salão (e não pelo id lido)
+      // para funcionar igual na base principal e na secundária, mesmo que os
+      // ids das duas não coincidam.
+      await executarDual(
+        "XONGUILE",
+        'UPDATE "Licenses" SET status = \'active\', "validUntil" = $2::timestamptz ' +
+          'WHERE id = (SELECT id FROM "Licenses" WHERE "SalonId" = $1 ' +
+          'ORDER BY "createdAt" DESC NULLS LAST LIMIT 1)',
+        [contaId, fimDia]
+      );
+      return {
+        anterior: atual.rows[0].data_fim_texto || atual.rows[0].data_fim || null,
+        nova: dataFim,
+      };
+    }
+
+    case "GESTORFARMA": {
+      const atual = await consultar(
+        "GESTORFARMA",
+        "SELECT id, data_fim, to_char(data_fim, 'YYYY-MM-DD') AS data_fim_texto " +
+          "FROM farmacias_licenca WHERE farmacia_id = $1 " +
+          "ORDER BY data_inicio DESC NULLS LAST, id DESC LIMIT 1",
+        [contaId]
+      );
+      if (atual.erro) throw new Error(`Falha ao ler GestorFarma: ${atual.erro}`);
+      if (!atual.rows.length) throw new Error("Esta farmácia não tem licença registada no GestorFarma");
+
+      await executarDual(
+        "GESTORFARMA",
+        "UPDATE farmacias_licenca SET is_ativa = true, paga = true, data_fim = $2::date, " +
+          "valor_pago = COALESCE($3::numeric, valor_pago) " +
+          "WHERE id = (SELECT id FROM farmacias_licenca WHERE farmacia_id = $1 " +
+          "ORDER BY data_inicio DESC NULLS LAST, id DESC LIMIT 1)",
+        [contaId, dataFim, valorPago]
+      );
+      return {
+        anterior: atual.rows[0].data_fim_texto || atual.rows[0].data_fim || null,
+        nova: dataFim,
+      };
+    }
+
+    case "ARMAZEM": {
+      const atual = await consultar(
+        "ARMAZEM",
+        "SELECT id, trial_ends_at AS data_fim, " +
+          "to_char(trial_ends_at, 'YYYY-MM-DD') AS data_fim_texto " +
+          "FROM users WHERE id = $1",
+        [contaId]
+      );
+      if (atual.erro) throw new Error(`Falha ao ler Armazém: ${atual.erro}`);
+      if (!atual.rows.length) throw new Error("Conta não encontrada no Armazém");
+
+      // A data-fim é partilhada pelo tenant e pelos subutilizadores.
+      await executarDual(
+        "ARMAZEM",
+        "UPDATE users SET trial_ends_at = $2::timestamp WHERE id = $1 OR parent_id = $1",
+        [contaId, fimDia]
+      );
+      return {
+        anterior: atual.rows[0].data_fim_texto || atual.rows[0].data_fim || null,
+        nova: dataFim,
+      };
+    }
+
+    default:
+      throw new Error(`Sistema inválido: ${sistema}`);
+  }
+}
+
 /** Preço de um plano pelo slug, lido do sistema do cliente. */
 export async function precoPlanoSaaS(produtoNome, slug) {
   const { ok, planos } = await listarPlanosSaaS(produtoNome);

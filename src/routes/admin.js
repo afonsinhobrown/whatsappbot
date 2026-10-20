@@ -8,9 +8,18 @@ import {
   updateRow,
   deleteRow,
   isDbConfigured,
+  query,
 } from "../services/dbService.js";
 import { sendTextMessage } from "../services/metaApi.js";
 import { confirmarPagamento } from "../flows/pagamento.js";
+import {
+  SISTEMAS_LICENCA_CASH,
+  procurarContasLicencaCash,
+} from "../services/saasService.js";
+import {
+  aplicarLicencaCash,
+  ensureCashTable,
+} from "../services/licencaCashService.js";
 
 const router = Router();
 const COOKIE = "tecno_admin";
@@ -297,6 +306,56 @@ router.post("/paysuite-webhook", async (req, res) => {
       }
     }
     return res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+/* =========================================================================
+ * LICENÇAS CASH — actualização manual da data-fim + talão de conferência
+ * ========================================================================= */
+
+function erroAdmin(mensagem) {
+  return Object.assign(new Error(mensagem), { status: 400 });
+}
+
+router.get("/licenca-cash/contas", requireAuth, async (req, res, next) => {
+  try {
+    const sistema = String(req.query.sistema || "").toUpperCase();
+    if (!SISTEMAS_LICENCA_CASH[sistema]) throw erroAdmin("Sistema inválido");
+
+    const contas = await procurarContasLicencaCash(sistema, req.query.nome);
+    res.json({ contas });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/licenca-cash", requireAuth, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const recibo = await aplicarLicencaCash({
+      sistema: body.sistema,
+      contaId: body.contaId,
+      contaNome: body.nome,
+      contaEmail: body.email,
+      dataFim: body.dataFim,
+      valor: body.valor,
+      observacao: body.observacao,
+    });
+    res.status(201).json({ ok: true, recibo });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/licenca-cash/recibos", requireAuth, async (_req, res, next) => {
+  try {
+    await ensureCashTable();
+    const { rows } = await query(
+      "SELECT * FROM licencas_cash ORDER BY id DESC LIMIT 200"
+    );
+    res.json({ recibos: rows, sistemas: SISTEMAS_LICENCA_CASH });
+  } catch (err) {
+    next(err);
   }
 });
 

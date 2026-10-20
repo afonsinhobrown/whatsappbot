@@ -14,6 +14,7 @@ export function sendMenu(send, nome, isAdmin = false) {
   if (isAdmin) {
     menuStr += "\n\n🛠️ *Comandos Privados (Apenas Admin):*\n";
     menuStr += "• *!dashboard* - Relatório IA de Gestão\n";
+    menuStr += "• *!licenca* - Actualizar licença (pagamento cash)\n";
     menuStr += "• *!responder [número] [msg]* - Chat manual com cliente";
   }
 
