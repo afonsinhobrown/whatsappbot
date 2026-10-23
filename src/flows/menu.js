@@ -5,7 +5,7 @@ export const MENU = [
   "4 - Encomendar sistema/serviço novo",
   "5 - Falar com administrador",
   "6 - 📅 Agendar Demonstração / Qualificação",
-  "7 - 🎵 DoReMi (Músicas & Beats à venda)",
+  "7 - 💿 DoReMi (Álbuns à venda)",
 ].join("\n");
 
 export function sendAdminHelp(send) {

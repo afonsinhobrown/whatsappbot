@@ -348,7 +348,7 @@ function routeMenu(client, lower, send, tenant, isAdmin = false) {
   if (lower === "6" || lower.includes("demonstração") || lower.includes("demonstracao") || lower.includes("agendar") || lower.includes("qualificacao")) {
     return startSDR(client, send, tenant);
   }
-  if (lower === "7" || lower.includes("doremi") || lower.includes("musica") || lower.includes("música") || lower.includes("beat")) {
+  if (lower === "7" || lower.includes("doremi") || lower.includes("album") || lower.includes("álbum") || lower.includes("albuns") || lower.includes("álbuns")) {
     return startDoremi(client, send);
   }
   // "bom dia", "tudo bem", "e aí": o cliente está a dizer olá, não a

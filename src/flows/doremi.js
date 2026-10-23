@@ -1,12 +1,13 @@
 import { setSession } from "../services/sessionService.js";
 
 /**
- * Fluxo DoReMi: venda de músicas e beats por WhatsApp.
+ * Fluxo DoReMi: venda exclusiva de Álbuns por WhatsApp.
  *
+ * Músicas e beats individuais foram removidos da venda a pedido do administrador.
  * Entra-se escrevendo "doremi"; enquanto o estado começar por "doremi_" o bot
  * só trata de assuntos do DoReMi. "sair" devolve ao menu normal.
- * O pagamento usa a mesma API da página /comprar/[id] (PaySuite) e a entrega
- * é o link /download?code=... quando a compra fica PAID.
+ * O pagamento usa o checkout PaySuite e a entrega é o link direto do álbum
+ * /baixar-albuns/d/<token> quando o pagamento fica PAID.
  */
 
 const DOREMI_URL = (process.env.DOREMI_URL || "https://doremi.tecnoincubadora.org").replace(/\/$/, "");
@@ -27,7 +28,7 @@ async function fetchCatalogo() {
   const res = await fetch(`${DOREMI_URL}/api/public/catalog`);
   if (!res.ok) throw new Error(`catalog ${res.status}`);
   const data = await res.json();
-  return [...(data.musicas || []), ...(data.beats || [])];
+  return data.albuns || [];
 }
 
 export async function startDoremi(client, send) {
@@ -35,26 +36,34 @@ export async function startDoremi(client, send) {
   try {
     itens = await fetchCatalogo();
   } catch (err) {
-    console.error("[DOREMI] catálogo:", err.message);
+    console.error("[DOREMI] catálogo de álbuns:", err.message);
     await setSession(client.id, "menu", {});
-    return send("😕 Não consegui carregar o catálogo DoReMi agora. Tenta mais tarde.");
+    return send("😕 Não consegui carregar o catálogo de álbuns DoReMi agora. Tenta mais tarde.");
   }
 
   if (!itens.length) {
     await setSession(client.id, "menu", {});
-    return send("🎵 De momento não há músicas nem beats à venda no DoReMi.");
+    return send("💿 De momento não há álbuns disponíveis para venda no DoReMi.");
   }
 
   // Guarda só o necessário para a escolha por número.
-  const lista = itens.map(({ id, tipo, titulo, autor, precoCents }) => ({ id, tipo, titulo, autor, precoCents }));
+  const lista = itens.map(({ id, titulo, autor, precoCents, trackCount, genre }) => ({
+    id,
+    tipo: "album",
+    titulo,
+    autor,
+    precoCents,
+    trackCount,
+    genre
+  }));
   await setSession(client.id, "doremi_menu", { itens: lista });
 
   const linhas = lista.map(
-    (i, n) => `*${n + 1}.* ${i.tipo === "beat" ? "🎧" : "🎵"} ${i.titulo} — ${i.autor} · ${formatMZN(i.precoCents)}`
+    (i, n) => `*${n + 1}.* 💿 *${i.titulo}* — ${i.autor} · ${formatMZN(i.precoCents)}${i.trackCount ? ` (${i.trackCount} faixas)` : ""}`
   );
   return send(
-    `🎶 *DoReMi — à venda*\n\n${linhas.join("\n")}\n\n` +
-      `Responde com o *número* do que queres comprar.\nEscreve *sair* para voltar ao menu.`
+    `💿 *DoReMi — Álbuns à venda*\n\n${linhas.join("\n")}\n\n` +
+      `Responde com o *número* do álbum que queres comprar.\nEscreve *sair* para voltar ao menu.`
   );
 }
 
@@ -65,7 +74,7 @@ export async function handleDoremiState(estado, client, ctx, text, send) {
     await setSession(client.id, "menu", {});
     return send("👋 Saíste do DoReMi. Escreve *menu* para ver as outras opções.");
   }
-  if (lower === "doremi" || lower === "lista") return startDoremi(client, send);
+  if (lower === "doremi" || lower === "lista" || lower === "albuns" || lower === "álbuns") return startDoremi(client, send);
 
   switch (estado) {
     case "doremi_menu":
@@ -106,7 +115,7 @@ async function criarCompra(client, ctx, text, send) {
   const body = {
     buyerName: nome.slice(0, 100),
     buyerPhone: telefoneLocal(client.whatsapp_number),
-    ...(item.tipo === "beat" ? { beatId: item.id } : { postId: item.id }),
+    albumId: item.id
   };
 
   let data;
@@ -121,16 +130,16 @@ async function criarCompra(client, ctx, text, send) {
       throw new Error(data.error || data.message || `buy ${res.status}`);
     }
   } catch (err) {
-    console.error("[DOREMI] compra:", err.message);
+    console.error("[DOREMI] compra de álbum:", err.message);
     await setSession(client.id, "doremi_menu", { itens: ctx.itens || [] });
-    return send(`😕 Não foi possível iniciar a compra: ${err.message}\nEscreve *lista* para ver o catálogo.`);
+    return send(`😕 Não foi possível iniciar a compra: ${err.message}\nEscreve *lista* para ver os álbuns.`);
   }
 
-  await setSession(client.id, "doremi_aguardar", { item, purchaseId: data.purchaseId });
+  await setSession(client.id, "doremi_aguardar", { item, purchaseId: data.purchaseId || data.saleId });
   return send(
-    `💳 *Pagamento — ${item.titulo}* (${formatMZN(item.precoCents)})\n\n` +
+    `💳 *Pagamento — Álbum "${item.titulo}"* (${formatMZN(item.precoCents)})\n\n` +
       `Paga aqui (M-Pesa, e-Mola ou cartão):\n${data.checkoutUrl}\n\n` +
-      `Depois de pagar, escreve *paguei* e eu envio-te o link de download. 🎧`
+      `Depois de pagar, escreve *paguei* e eu envio-te o link de download do álbum completo. 💿`
   );
 }
 
@@ -149,11 +158,12 @@ async function verificarPagamento(client, ctx, send) {
 
   if (data.status === "PAID" && data.downloadCode) {
     await setSession(client.id, "doremi_menu", {});
+    const downloadUrl = data.downloadUrl || `${DOREMI_URL}/baixar-albuns/d/${data.downloadCode}`;
     return send(
       `✅ Pagamento confirmado! Obrigado, ${data.buyerName || ""}.\n\n` +
-        `⬇️ *${data.title}*\n${DOREMI_URL}/download?code=${data.downloadCode}\n\n` +
-        `Código: *${data.downloadCode}* (válido 30 dias, até 5 downloads).\n\n` +
-        `Escreve *lista* para comprar mais ou *sair* para terminar.`
+        `💿 *${data.title}*\n${downloadUrl}\n\n` +
+        `Link de download: *${data.downloadCode}* (permite até 3 downloads).\n\n` +
+        `Escreve *lista* para ver outros álbuns ou *sair* para terminar.`
     );
   }
 
