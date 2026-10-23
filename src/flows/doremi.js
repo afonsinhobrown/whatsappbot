@@ -27,7 +27,11 @@ async function fetchCatalogo() {
   const res = await fetch(`${DOREMI_URL}/api/public/catalog`);
   if (!res.ok) throw new Error(`catalog ${res.status}`);
   const data = await res.json();
-  return [...(data.musicas || []), ...(data.beats || [])];
+  return [
+    ...(data.musicas || []).map((m) => ({ ...m, tipo: "musica" })),
+    ...(data.beats || []).map((b) => ({ ...b, tipo: "beat" })),
+    ...(data.albuns || []).map((a) => ({ ...a, tipo: "album" })),
+  ];
 }
 
 export async function startDoremi(client, send) {
@@ -50,11 +54,14 @@ export async function startDoremi(client, send) {
   await setSession(client.id, "doremi_menu", { itens: lista });
 
   const linhas = lista.map(
-    (i, n) => `*${n + 1}.* ${i.tipo === "beat" ? "🎧" : "🎵"} ${i.titulo} — ${i.autor} · ${formatMZN(i.precoCents)}`
+    (i, n) => `*${n + 1}.* ${i.tipo === "beat" ? "🎧" : i.tipo === "album" ? "💿" : "🎵"} ${i.titulo} — ${i.autor} · ${formatMZN(i.precoCents)}`
   );
   return send(
     `🎶 *DoReMi — à venda*\n\n${linhas.join("\n")}\n\n` +
-      `Responde com o *número* do que queres comprar.\nEscreve *sair* para voltar ao menu.`
+      `Responde com o *número* do que queres comprar.\n` +
+      `Escreve *bilhetes* para ver opções de bilhetes digitais.\n` +
+      `Escreve *convites* para ver opções de convites digitais.\n` +
+      `Escreve *sair* para voltar ao menu.`
   );
 }
 
@@ -66,6 +73,24 @@ export async function handleDoremiState(estado, client, ctx, text, send) {
     return send("👋 Saíste do DoReMi. Escreve *menu* para ver as outras opções.");
   }
   if (lower === "doremi" || lower === "lista") return startDoremi(client, send);
+
+  if (lower === "bilhetes") {
+    await setSession(client.id, "menu", {});
+    return send(
+      "🎫 *Bilhetes digitais*\n\n" +
+        "Consulta os eventos disponíveis em https://doremi.tecnoincubadora.org/events\n\n" +
+        "Ou queres organizar o teu próprio evento? Contacta https://wa.me/258861390985"
+    );
+  }
+
+  if (lower === "convites") {
+    await setSession(client.id, "menu", {});
+    return send(
+      "💌 *Convites digitais*\n\n" +
+        "Compra modelos de convite em https://convites-beta.vercel.app\n\n" +
+        "Ou cria o teu próprio convite para o teu evento."
+    );
+  }
 
   switch (estado) {
     case "doremi_menu":
@@ -106,7 +131,11 @@ async function criarCompra(client, ctx, text, send) {
   const body = {
     buyerName: nome.slice(0, 100),
     buyerPhone: telefoneLocal(client.whatsapp_number),
-    ...(item.tipo === "beat" ? { beatId: item.id } : { postId: item.id }),
+    ...(item.tipo === "beat"
+      ? { beatId: item.id }
+      : item.tipo === "album"
+        ? { albumId: item.id }
+        : { postId: item.id }),
   };
 
   let data;
