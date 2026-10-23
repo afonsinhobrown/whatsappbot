@@ -44,11 +44,6 @@ export async function startDoremi(client, send) {
     return send("😕 Não consegui carregar o catálogo DoReMi agora. Tenta mais tarde.");
   }
 
-  if (!itens.length) {
-    await setSession(client.id, "menu", {});
-    return send("🎵 De momento não há músicas nem beats à venda no DoReMi.");
-  }
-
   // Guarda só o necessário para a escolha por número.
   const lista = itens.map(({ id, tipo, titulo, autor, precoCents }) => ({ id, tipo, titulo, autor, precoCents }));
   await setSession(client.id, "doremi_menu", { itens: lista });
@@ -56,8 +51,13 @@ export async function startDoremi(client, send) {
   const linhas = lista.map(
     (i, n) => `*${n + 1}.* ${i.tipo === "beat" ? "🎧" : i.tipo === "album" ? "💿" : "🎵"} ${i.titulo} — ${i.autor} · ${formatMZN(i.precoCents)}`
   );
+
+  const mensagemItens = itens.length
+    ? `🎶 *DoReMi — à venda*\n\n${linhas.join("\n")}\n\n`
+    : "🎵 De momento não há músicas nem beats à venda no DoReMi.\n\n";
+
   return send(
-    `🎶 *DoReMi — à venda*\n\n${linhas.join("\n")}\n\n` +
+    `${mensagemItens}` +
       `Responde com o *número* do que queres comprar.\n` +
       `Escreve *bilhetes* para ver opções de bilhetes digitais.\n` +
       `Escreve *convites* para ver opções de convites digitais.\n` +
