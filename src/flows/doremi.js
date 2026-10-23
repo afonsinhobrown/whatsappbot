@@ -97,10 +97,9 @@ async function escolherItem(client, ctx, lower, send) {
   }
 
   await setSession(client.id, "doremi_nome", { item });
-  const nome = client.nome ? ` (ou *ok* para usar "${client.nome}")` : "";
   return send(
     `Escolheste: *${item.titulo}* — ${formatMZN(item.precoCents)}\n\n` +
-      `Qual é o teu nome para a compra?${nome}`
+      `Por favor, escreve o teu *Nome Completo* para a compra:`
   );
 }
 
@@ -108,9 +107,10 @@ async function criarCompra(client, ctx, text, send) {
   const item = ctx.item;
   if (!item) return startDoremi(client, send);
 
-  let nome = String(text || "").trim();
-  if (nome.toLowerCase() === "ok" && client.nome) nome = client.nome;
-  if (nome.length < 2) return send("Escreve o teu nome (mínimo 2 letras).");
+  const nome = String(text || "").trim();
+  if (nome.length < 2 || nome.toLowerCase() === "ok") {
+    return send("É obrigatório escrever o teu nome completo (mínimo 2 letras) para prosseguir:");
+  }
 
   const body = {
     buyerName: nome.slice(0, 100),
