@@ -9,7 +9,7 @@ import { setSession } from "../services/sessionService.js";
  * é o link /download?code=... quando a compra fica PAID.
  */
 
-const DOREMI_URL = (process.env.DOREMI_URL || "https://doremi.tecnoincubadora.com").replace(/\/$/, "");
+const DOREMI_URL = (process.env.DOREMI_URL || "https://doremi.tecnoincubadora.org").replace(/\/$/, "");
 
 const formatMZN = (cents) => `${(Number(cents || 0) / 100).toFixed(2)} MZN`;
 
