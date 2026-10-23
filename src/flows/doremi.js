@@ -27,7 +27,11 @@ async function fetchCatalogo() {
   const res = await fetch(`${DOREMI_URL}/api/public/catalog`);
   if (!res.ok) throw new Error(`catalog ${res.status}`);
   const data = await res.json();
-  return [...(data.musicas || []), ...(data.beats || [])];
+  return [
+    ...(data.musicas || []).map((m) => ({ ...m, tipo: "musica" })),
+    ...(data.beats || []).map((b) => ({ ...b, tipo: "beat" })),
+    ...(data.albuns || []).map((a) => ({ ...a, tipo: "album" })),
+  ];
 }
 
 export async function startDoremi(client, send) {
@@ -45,7 +49,7 @@ export async function startDoremi(client, send) {
   await setSession(client.id, "doremi_menu", { itens: lista });
 
   const linhas = lista.map(
-    (i, n) => `*${n + 1}.* ${i.tipo === "beat" ? "🎧" : "🎵"} ${i.titulo} — ${i.autor} · ${formatMZN(i.precoCents)}`
+    (i, n) => `*${n + 1}.* ${i.tipo === "beat" ? "🎧" : i.tipo === "album" ? "💿" : "🎵"} ${i.titulo} — ${i.autor} · ${formatMZN(i.precoCents)}`
   );
 
   const mensagemItens = itens.length
@@ -123,13 +127,15 @@ async function criarCompra(client, ctx, text, send) {
   let nome = String(text || "").trim();
   if (nome.toLowerCase() === "ok" && client.nome) nome = client.nome;
   if (nome.length < 2) return send("Escreve o teu nome (mínimo 2 letras).");
-
-  const body = {
+const body = {
     buyerName: nome.slice(0, 100),
     buyerPhone: telefoneLocal(client.whatsapp_number),
-    ...(item.tipo === "beat" ? { beatId: item.id } : { postId: item.id }),
+    ...(item.tipo === "beat"
+      ? { beatId: item.id }
+      : item.tipo === "album"
+        ? { albumId: item.id }
+        : { postId: item.id }),
   };
-
   let data;
   try {
     const res = await fetch(`${DOREMI_URL}/api/public/buy`, {
