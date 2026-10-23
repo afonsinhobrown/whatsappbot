@@ -43,6 +43,12 @@ import {
   startNhamaingaMenu,
   handleNhamaingaState,
 } from "../flows/nhamainga.js";
+import {
+  isDoremiTrigger,
+  isDoremiState,
+  startDoremi,
+  handleDoremiState,
+} from "../flows/doremi.js";
 import { adminNumbers } from "../config/env.js";
 
 const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
@@ -219,6 +225,15 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     return handleNhamaingaState(estado, client, ctx, text, send, tenant);
   }
 
+  // Fluxo DoReMi: ativação com "doremi", exclusivo até o cliente sair
+  if (isDoremiTrigger(text)) {
+    return startDoremi(client, send);
+  }
+
+  if (isDoremiState(estado)) {
+    return handleDoremiState(estado, client, ctx, text, send);
+  }
+
   // Comandos globais: voltar ao menu / cancelar
   if (COMANDOS_MENU.includes(lower)) {
     await setSession(client.id, "menu", {});
@@ -332,6 +347,9 @@ function routeMenu(client, lower, send, tenant, isAdmin = false) {
   }
   if (lower === "6" || lower.includes("demonstração") || lower.includes("demonstracao") || lower.includes("agendar") || lower.includes("qualificacao")) {
     return startSDR(client, send, tenant);
+  }
+  if (lower === "7" || lower.includes("doremi") || lower.includes("musica") || lower.includes("música") || lower.includes("beat")) {
+    return startDoremi(client, send);
   }
   // "bom dia", "tudo bem", "e aí": o cliente está a dizer olá, não a
   // escolher uma opção. Sem isto, respondia "Não entendi o seu pedido" a uma
