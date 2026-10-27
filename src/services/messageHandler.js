@@ -1,4 +1,4 @@
-﻿import { sendTextMessage, downloadMedia } from "./metaApi.js";
+import { sendTextMessage, downloadMedia } from "./metaApi.js";
 import { isAiEnabled, analyzeMedia } from "./aiService.js";
 import { handleAiMessage } from "../flows/aiChat.js";
 import { getClientByWhatsapp, touchClient, setClientName } from "./dbService.js";
@@ -51,13 +51,13 @@ import {
 } from "../flows/doremi.js";
 import { adminNumbers } from "../config/env.js";
 
-const COMANDOS_MENU = ["menu", "iniciar", "comeÃ§ar", "comecar", "ola", "olÃ¡", "oi", "hey", "0"];
+const COMANDOS_MENU = ["menu", "iniciar", "começar", "comecar", "ola", "olá", "oi", "hey", "0"];
 
 const somenteDigitos = (v) => String(v || "").replace(/\D/g, "");
 
 /**
  * Ponto de entrada para cada mensagem de texto recebida no webhook.
- * Gere o cliente + sessÃ£o e encaminha para o fluxo consoante o estado.
+ * Gere o cliente + sessão e encaminha para o fluxo consoante o estado.
  */
 export async function handleIncomingMessage(message, changeValue, tenant) {
   const phone = message.from;
@@ -74,26 +74,26 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
 
   const send = (reply) => sendTextMessage(phone, reply, tenant);
 
-  // Fase 5 e 6: Ãudio e Imagens
+  // Fase 5 e 6: Áudio e Imagens
   if (message.type === "audio" && message.audio) {
-    if (!isAiEnabled()) return send("Desculpa, nÃ£o consigo ouvir Ã¡udios neste momento.");
-    send("A ouvir o teu Ã¡udio... ðŸŽ§");
+    if (!isAiEnabled()) return send("Desculpa, não consigo ouvir áudios neste momento.");
+    send("A ouvir o teu áudio... 🎧");
     try {
       const media = await downloadMedia(message.audio.id, tenant);
-      const respostaIA = await analyzeMedia(media, "O utilizador enviou um Ã¡udio. Responde diretamente e amigavelmente ao que ele pede ou diz.", tenant);
+      const respostaIA = await analyzeMedia(media, "O utilizador enviou um áudio. Responde diretamente e amigavelmente ao que ele pede ou diz.", tenant);
       return send(respostaIA);
     } catch (e) {
       console.error("[VOZ] Falha ao processar:", e.message);
-      return send("Desculpa, tive um problema a abrir o Ã¡udio. Podes escrever?");
+      return send("Desculpa, tive um problema a abrir o áudio. Podes escrever?");
     }
   }
 
   if (message.type === "image" && message.image) {
-    if (!isAiEnabled()) return send("Desculpa, nÃ£o consigo ver imagens neste momento.");
-    send("A analisar a tua imagem... ðŸ‘ï¸");
+    if (!isAiEnabled()) return send("Desculpa, não consigo ver imagens neste momento.");
+    send("A analisar a tua imagem... 👁️");
     try {
       const media = await downloadMedia(message.image.id, tenant);
-      const respostaIA = await analyzeMedia(media, "O utilizador enviou esta imagem. Se for um comprovativo de pagamento, confirma e extrai os dados. SenÃ£o, descreve o que vÃªs ou responde adequadamente.", tenant);
+      const respostaIA = await analyzeMedia(media, "O utilizador enviou esta imagem. Se for um comprovativo de pagamento, confirma e extrai os dados. Senão, descreve o que vês ou responde adequadamente.", tenant);
       return send(respostaIA);
     } catch (e) {
       console.error("[IMAGEM] Falha ao processar:", e.message);
@@ -102,17 +102,17 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   }
 
   // Se a mensagem vier do administrador e for um comando de resposta (!responder numero mensagem)
-  // A comparaÃ§Ã£o Ã© feita sÃ³ com dÃ­gitos: o nÃºmero chega da Meta como "2588..." e
-  // a variÃ¡vel de ambiente pode estar guardada com +, espaÃ§os ou o paÃ­s, e a
-  // comparaÃ§Ã£o literal nunca batia.
+  // A comparação é feita só com dígitos: o número chega da Meta como "2588..." e
+  // a variável de ambiente pode estar guardada com +, espaços ou o país, e a
+  // comparação literal nunca batia.
   //
-  // Este teste fica dentro de um try/catch: corria antes de qualquer protecÃ§Ã£o,
+  // Este teste fica dentro de um try/catch: corria antes de qualquer protecção,
   // e uma falha aqui impedia o bot de responder a QUALQUER cliente.
   let numerosAdmin = [];
   try {
     numerosAdmin = adminNumbers();
   } catch (err) {
-    console.error("[ADMIN] nÃ£o consegui ler os nÃºmeros de admin:", err.message);
+    console.error("[ADMIN] não consegui ler os números de admin:", err.message);
   }
   
   const isAdmin = numerosAdmin.includes(somenteDigitos(phone));
@@ -127,7 +127,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
 
     if (["!licenca", "!licencas", "!cash"].includes(text.toLowerCase())) {
       const adminClient = await getClientByWhatsapp(tenant.id, phone);
-      // getSession cria a linha se ainda nÃ£o existir; setSession sozinho nÃ£o
+      // getSession cria a linha se ainda não existir; setSession sozinho não
       // actualiza nada quando o admin nunca falou com o bot.
       await getSession(tenant.id, adminClient.id);
       await setSession(adminClient.id, "cash_sistema", {});
@@ -148,7 +148,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     if (parts.length >= 3) {
       const targetPhone = parts[1];
       const replyText = parts.slice(2).join(" ");
-      await sendTextMessage(targetPhone, `ðŸ‘¨â€ðŸ’» *Administrador:* ${replyText}`, tenant);
+      await sendTextMessage(targetPhone, `👨‍💻 *Administrador:* ${replyText}`, tenant);
       
       try {
         const targetClient = await getClientByWhatsapp(tenant.id, targetPhone);
@@ -159,9 +159,9 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
         console.error("Erro ao actualizar estado do cliente para humano:", err);
       }
 
-      return sendTextMessage(phone, `âœ… Mensagem enviada para ${targetPhone}.`, tenant);
+      return sendTextMessage(phone, `✅ Mensagem enviada para ${targetPhone}.`, tenant);
     } else {
-      return sendTextMessage(phone, `âŒ Erro no comando. Use: !responder NUMERO MENSAGEM`, tenant);
+      return sendTextMessage(phone, `❌ Erro no comando. Use: !responder NUMERO MENSAGEM`, tenant);
     }
   }
 }
@@ -177,27 +177,27 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
   const estado = session.estado_atual || "inicio";
   const ctx = session.contexto || {};
 
-  // O dono tambÃ©m usa o bot para testar; uma saudaÃ§Ã£o solta no menu normal
-  // nÃ£o precisa de resposta. Mas dentro do menu Nhamainga (ou no nÃºmero
-  // dedicado) a saudaÃ§Ã£o Ã© parte da conversa e deve ser acolhida.
+  // O dono também usa o bot para testar; uma saudação solta no menu normal
+  // não precisa de resposta. Mas dentro do menu Nhamainga (ou no número
+  // dedicado) a saudação é parte da conversa e deve ser acolhida.
   if (
     isAdmin &&
     !isNhamaingaNumber(phone) &&
     isSaudacao(text) &&
     !estado.startsWith("nhamainga_")
   ) {
-    console.log(`[MSG] saudaÃ§Ã£o do prÃ³prio dono (${phone}) â€” sem resposta`);
+    console.log(`[MSG] saudação do próprio dono (${phone}) — sem resposta`);
     return;
   }
 
-  // O fluxo de licenÃ§as cash sÃ³ existe para o dono/admin. Se o nÃºmero sair da
-  // lista de admins a meio, nÃ£o pode continuar a mexer em licenÃ§as.
+  // O fluxo de licenças cash só existe para o dono/admin. Se o número sair da
+  // lista de admins a meio, não pode continuar a mexer em licenças.
   if (estado.startsWith("cash_") && !isAdmin) {
     await setSession(client.id, "menu", {});
-    return send("Esse comando Ã© restrito ao administrador.");
+    return send("Esse comando é restrito ao administrador.");
   }
 
-  // Menu especializado da farmÃ¡cia Nhamainga: o nÃºmero dedicado entra sempre
+  // Menu especializado da farmácia Nhamainga: o número dedicado entra sempre
   // neste menu, independentemente do estado anterior da conversa.
   if (isNhamaingaNumber(phone)) {
     if (estado.startsWith("nhamainga_") && estado !== "nhamainga_menu") {
@@ -225,15 +225,7 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     return handleNhamaingaState(estado, client, ctx, text, send, tenant);
   }
 
-  // Fluxo DoReMi: ativaÃ§Ã£o com "doremi", exclusivo atÃ© o cliente sair
-  if (isVukaTrigger(text)) {
-    return startVuka(client, send);
-  }
-
-  if (isVukaState(estado)) {
-    return handleVukaState(estado, client, ctx, text, send);
-  }
-
+  // Fluxo DoReMi: ativação com "doremi", exclusivo até o cliente sair
   if (isDoremiTrigger(text)) {
     return startDoremi(client, send);
   }
@@ -248,13 +240,13 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
     return sendMenu(send, senderName, isAdmin);
   }
 
-  // SaudaÃ§Ã£o a meio de um fluxo ("bom dia", "tudo bem"). Fica depois dos
-  // comandos globais para nÃ£o mudar o que jÃ¡ acontecia com "oi"/"ola" exatos,
-  // e nÃ£o toca no estado: o cliente ia a meio de uma cotaÃ§Ã£o e deitÃ¡-la fora  // para lhe cumprimentar era pior do que a resposta trocada.
+  // Saudação a meio de um fluxo ("bom dia", "tudo bem"). Fica depois dos
+  // comandos globais para não mudar o que já acontecia com "oi"/"ola" exatos,
+  // e não toca no estado: o cliente ia a meio de uma cotação e deitá-la fora  // para lhe cumprimentar era pior do que a resposta trocada.
   //
-  // O estado "humano" fica de fora de propÃ³sito: lÃ¡ a mensagem do cliente Ã©
-  // para o administrador, e responder "olÃ¡" por cima era tirar-lhe a
-  // atendimento que ele prÃ³prio tinha pedido.
+  // O estado "humano" fica de fora de propósito: lá a mensagem do cliente é
+  // para o administrador, e responder "olá" por cima era tirar-lhe a
+  // atendimento que ele próprio tinha pedido.
   if (
     estado !== "inicio" &&
     estado !== "menu" &&
@@ -301,30 +293,30 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
       return handleCashConfirmar(client, ctx, text, send);
     case "humano":
       // Um cliente que pede falar com administrador mas depois escreve "menu"
-      // (ou qualquer comando global) jÃ¡ Ã© tratado acima e sai do estado.
+      // (ou qualquer comando global) já é tratado acima e sai do estado.
       // Sem isto, o bot ficava a responder "mensagem enviada ao admin"
       // para sempre, sem o cliente conseguir voltar ao menu.
       //
-      // Uma saudaÃ§Ã£o nÃ£o Ã© pedido de nada: um "bom dia" deixado no ar
+      // Uma saudação não é pedido de nada: um "bom dia" deixado no ar
       // acordava o dono de madrugada sem haver nada para responder. O cliente
       // continua no estado humano e a conversa real chega ao admin logo a
       // seguir.
       if (isSaudacao(text)) {
-        console.log(`[MSG] saudaÃ§Ã£o ignorada de ${client.whatsapp_number} (estado humano)`);
+        console.log(`[MSG] saudação ignorada de ${client.whatsapp_number} (estado humano)`);
         return;
       }
       //
-      // O encaminhamento ao admin nÃ£o pode derrubar a mensagem do cliente: um
-      // nÃºmero invÃ¡lido ou um token expirado fariam a excepÃ§Ã£o sair daqui e a
+      // O encaminhamento ao admin não pode derrubar a mensagem do cliente: um
+      // número inválido ou um token expirado fariam a excepção sair daqui e a
       // mensagem nunca chegava a lado nenhum.
       for (const numero of numerosAdmin) {
         try {
-          await sendTextMessage(numero, `ðŸ“© *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
+          await sendTextMessage(numero, `📩 *Mensagem de ${client.nome || "Cliente"} (${client.whatsapp_number}):*\n${text}\n\n_Responda usando: !responder ${client.whatsapp_number} sua mensagem_`, tenant);
         } catch (err) {
-          console.error(`[ADMIN] nÃ£o consegui entregar a mensagem em ${numero}: ${err.message}`);
+          console.error(`[ADMIN] não consegui entregar a mensagem em ${numero}: ${err.message}`);
         }
       }
-      return; // nÃ£o envia feedback automÃ¡tico ao cliente
+      return; // não envia feedback automático ao cliente
     case "menu":
     default:
       return routeMenu(client, lower, send, tenant, isAdmin);
@@ -332,10 +324,10 @@ export async function handleIncomingMessage(message, changeValue, tenant) {
 }
 
 function routeMenu(client, lower, send, tenant, isAdmin = false) {
-  if (lower === "1" || lower.includes("cotaÃ§Ã£o") || lower.includes("cotacao")) {
+  if (lower === "1" || lower.includes("cotação") || lower.includes("cotacao")) {
     return startCotacao(client, send);
   }
-  if (lower === "2" || lower.includes("plano") || lower.includes("preÃ§o") || lower.includes("preco")) {
+  if (lower === "2" || lower.includes("plano") || lower.includes("preço") || lower.includes("preco")) {
     return showProdutos(client, send);
   }
   if (lower === "3" || lower.includes("pagar") || lower.includes("licen")) {
@@ -353,26 +345,22 @@ function routeMenu(client, lower, send, tenant, isAdmin = false) {
   ) {
     return falarComHumano(client, send, tenant);
   }
-  if (lower === "6" || lower.includes("demonstraÃ§Ã£o") || lower.includes("demonstracao") || lower.includes("agendar") || lower.includes("qualificacao")) {
+  if (lower === "6" || lower.includes("demonstração") || lower.includes("demonstracao") || lower.includes("agendar") || lower.includes("qualificacao")) {
     return startSDR(client, send, tenant);
   }
-  if (lower === "8" || lower.includes("vuka") || lower.includes("jornal") || lower.includes("noticias")) {
-    return startVuka(client, send);
-  }
-  if (lower === "7" || lower.includes("doremi") || lower.includes("album") || lower.includes("Ã¡lbum") || lower.includes("albuns") || lower.includes("Ã¡lbuns")) {
+  if (lower === "7" || lower.includes("doremi") || lower.includes("album") || lower.includes("álbum") || lower.includes("albuns") || lower.includes("álbuns")) {
     return startDoremi(client, send);
   }
-  // "bom dia", "tudo bem", "e aÃ­": o cliente estÃ¡ a dizer olÃ¡, nÃ£o a
-  // escolher uma opÃ§Ã£o. Sem isto, respondia "NÃ£o entendi o seu pedido" a uma
-  // saudaÃ§Ã£o â€” e era isso que o fez parecer um bot mudo.
+  // "bom dia", "tudo bem", "e aí": o cliente está a dizer olá, não a
+  // escolher uma opção. Sem isto, respondia "Não entendi o seu pedido" a uma
+  // saudação — e era isso que o fez parecer um bot mudo.
   if (isSaudacao(lower)) {
     return responderSaudacao(client, send);
   }
   // Fallback inteligente: se a IA estiver activa, responde com GPT em vez
-  // de "NÃ£o entendi". Se nÃ£o estiver configurada, comportamento anterior.
+  // de "Não entendi". Se não estiver configurada, comportamento anterior.
   if (isAiEnabled()) {
     return handleAiMessage(client, lower, send, tenant);
   }
   return sendMenu(send, client.nome, isAdmin);
 }
-
